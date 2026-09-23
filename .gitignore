@@ -1,0 +1,9 @@
+data/*
+!data/README.md
+
+ROS2 folder/build/
+ROS2 folder/install/
+ROS2 folder/log/
+
+__pycache__/
+*.pyc
