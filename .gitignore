@@ -6,4 +6,34 @@ ROS2 folder/install/
 ROS2 folder/log/
 
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+
+# Виртуальные окружения
+.venv/
+venv/
+env/
+.venvs/
+
+# Записи rosbag2 (22 ГиБ) — в репозиторий не идут, передаются отдельно
+doubleT_obstacle/
+doubleT_platform/
+roundT_doubleT/
+roundT_pressureGate_roundT/
+roundT_squareT_pressureGate_squareT/
+squareT_platform_squareT_switch/
+*.db3
+*.mcap
+
+# Результаты прогонов и выгрузки
+runs/*
+!runs/.gitkeep
+out/
+*.npy
+*.pcd
+*.ply
+*.gif
+
+# Локальные рабочие файлы
+HANDOFF.md
+ALGORITHM.md

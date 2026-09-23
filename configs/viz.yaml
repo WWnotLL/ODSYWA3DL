@@ -1,0 +1,85 @@
+# Настройки визуализации и сюжеты для tools/visualize_run.py.
+core_config: "configs/default.yaml"
+output_root: "out/viz"
+check_against_runs: "runs/confirm_fix"
+drawing:
+  point_stride: 8
+  point_size: 0.6
+  point_alpha: 0.35
+  fps: 4
+  dpi: 80
+  figure_size_in: [16.0, 9.0]
+  row_heights: [5.0, 1.3]
+  column_widths: [2.4, 1.0]
+style:
+  line_width: 1.4
+  thin_line_width: 0.8
+  zone_alpha: 0.28
+  box_alpha: 0.55
+  font_size: 9
+  legend_font_size: 7
+  title_font_size: 11
+  section_point_scale: 3.0
+  platform_hatch: "////"
+top_view:
+  x_range_m: [0.0, 40.0]
+  y_range_m: [-5.0, 5.0]
+  corridor_step_m: 0.5
+section:
+  window_m: 1.0
+  default_distance_m: 15.0
+  lateral_range_m: [-3.0, 3.0]
+  height_range_m: [-0.5, 4.5]
+colors:
+  points: "#7f7f7f"
+  axis_rails: "#1f77b4"
+  axis_bed: "#ff7f0e"
+  corridor: "#2ca02c"
+  cut_platform: "#9467bd"
+  cut_contact_rail: "#8c564b"
+  candidate: "#d62728"
+  alarm: "#d62728"
+  state_measured: "#2ca02c"
+  state_held: "#bcbd22"
+  state_degraded: "#ff7f0e"
+  state_lost: "#7f7f7f"
+  state_anchor_uninitialised: "#17becf"
+  unchecked: "#000000"
+  verdict_stop: "#e377c2"
+  cursor: "#000000"
+view3d:
+  point_stride: 1
+  point_size: 1.5
+  window_size: [1400, 900]
+  line_colors:
+    candidate: [1.0, 0.85, 0.0]
+    alarm: [1.0, 0.1, 0.1]
+    axis: [0.2, 0.6, 1.0]
+    corridor: [0.2, 0.9, 0.3]
+export:
+  output_root: "out/scenario_frames"
+  frames_every: 3
+  moved_tolerance_m: 1.0e-4
+  body_color: [1.0, 0.15, 0.15]
+stories:
+  obstacle:
+    record: "doubleT_obstacle"
+    frames: [150, 200]
+  approach:
+    scenario_argv: ["--config", "configs/default.yaml", "--scenario", "approach",
+                    "--record", "roundT_doubleT", "--advance-m", "1.7",
+                    "--distance-m", "22", "--first-frame", "10",
+                    "--last-frame", "251", "--via-pipeline"]
+    frames: [10, 251]
+  platform:
+    record: "doubleT_platform"
+    frames: [15, 40]
+  squareT:
+    record: "roundT_squareT_pressureGate_squareT"
+    frames: [25, 45]
+  corner_far:
+    record: "squareT_platform_squareT_switch"
+    frames: [228, 300]
+  corner_near:
+    record: "squareT_platform_squareT_switch"
+    frames: [718, 732]
