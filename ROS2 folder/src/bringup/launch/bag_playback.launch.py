@@ -11,6 +11,8 @@ from launch_ros.actions import Node
 def generate_launch_description():
     pkg_share = get_package_share_directory('bringup')
     default_rviz = os.path.join(pkg_share, 'config', 'lidar_monitor.rviz')
+    default_detector_params = os.path.join(
+        get_package_share_directory('obstacle_detector'), 'config', 'params.yaml')
     default_bags_dir = '/workspace/data/for_hackathon'
 
     bag_arg = DeclareLaunchArgument(
@@ -25,6 +27,17 @@ def generate_launch_description():
     loop_arg = DeclareLaunchArgument('loop', default_value='true', description='Зациклить проигрывание')
     rviz_arg = DeclareLaunchArgument('rviz', default_value='true', description='Открывать ли RViz')
     rviz_config_arg = DeclareLaunchArgument('rviz_config', default_value=default_rviz)
+    detect_arg = DeclareLaunchArgument(
+        'detect', default_value='true', description='Запускать ли ноду детекции препятствий',
+    )
+    pointcloud_topic_arg = DeclareLaunchArgument(
+        'pointcloud_topic', default_value='/lidar_points',
+        description='Топик облака точек. /sensing/lidar/hesai128/pointcloud для doubleT_obstacle',
+    )
+    detector_params_arg = DeclareLaunchArgument(
+        'detector_params', default_value=default_detector_params,
+        description='YAML с параметрами ноды obstacle_detector',
+    )
 
     bag_path = PathJoinSubstitution([LaunchConfiguration('bags_dir'), LaunchConfiguration('bag')])
 
@@ -63,6 +76,18 @@ def generate_launch_description():
         output='screen',
     )
 
+    detector_node = Node(
+        package='obstacle_detector',
+        executable='obstacle_detector_node',
+        name='obstacle_detector',
+        parameters=[
+            LaunchConfiguration('detector_params'),
+            {'pointcloud_topic': LaunchConfiguration('pointcloud_topic')},
+        ],
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('detect')),
+    )
+
     return LaunchDescription([
         bag_arg,
         bags_dir_arg,
@@ -70,9 +95,13 @@ def generate_launch_description():
         loop_arg,
         rviz_arg,
         rviz_config_arg,
+        detect_arg,
+        pointcloud_topic_arg,
+        detector_params_arg,
         tf_lidar_livox,
         tf_hesai_lidar,
         bag_play_loop,
         bag_play_once,
         rviz_node,
+        detector_node,
     ])
