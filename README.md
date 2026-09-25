@@ -102,25 +102,78 @@
 ---
 
 ### Алгоритм запуска
-1. Клонируйте репозиторий
+#### 1. Клонируйте репозиторий
    ```
    git clone https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar.git
    cd Obstacle-detection-system-with-a-3D-lidar
    ```
-3. Соберите Docker-образ
+#### 2. Соберите Docker-образ
    ```
    docker build -t tunnel_detector:latest .
    ```
-4. Запустите контейнер
-*- Запуск без визуализации*
+#### 3. Запустите контейнер
+
+*3.1 Запуск без визуализации*
    ```
    docker run -it --rm \
     --name tunnel_detector \
     --net=host \
     tunnel_detector:latest
    ```
-*- Запуск с визуализацией*
+*3.2 Запуск с визуализацией*
 
-6. Воспроизведите bag-файл
-7. Проверьте результат
-8. Остановка
+Разрешите доступ к дисплею:
+   ```
+   xhost +local:docker
+   ```
+Запустите контейнер с пробросом X11:
+   ```
+   docker run -it --rm \
+    --name tunnel_detector \
+    --net=host \
+    -e DISPLAY=$DISPLAY \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    tunnel_detector:latest
+   ```
+
+Внутри контейнера запустите RViz2:
+
+   ```
+   rviz2
+   ```
+
+#### 4. Воспроизведите bag-файл
+Если у вас установлен ROS 2 Humble на хосте:
+
+   ```
+   ros2 bag play <путь_к_bag_файлу> --clock
+   ```
+    
+В ином случае можно запустить во втором терминале внутри контейнера:
+  
+   ```
+   docker exec -it tunnel_detector bash
+   ros2 bag play /data/<bag_файл> --clock
+   ```
+
+#### 5. Проверьте результат
+*Если запускали без визуализации, то в терминале контейнера уведите логи:*
+
+[INFO] [detector_node]: Обнаружено препятствий: 1
+
+[INFO] [detector_node]: Ближайшее препятствие: 45.3 м
+
+
+*Если запускали с визуализацией в RViz:*
+1. Добавьте Fixed Frame: lidar_frame
+2. Добавьте сырое облако точек PointCloud2: /lidar/points
+3. Добавьте обнаруженные препятствия MarkerArray: /obstacles/markers 
+И тогда вы увидите рамки вокруг обнаруженных объектов.
+
+   
+#### 6. Остановка
+Для остановки необходимо остановить проигрывание bag-файла, нажав **Ctrl+C** в терминале с ros2 bag play.
+И затем остановите контейнер, написав в терминале команду:
+   ```
+   docker stop tunnel_detector
+   ```
