@@ -177,6 +177,8 @@
    docker stop tunnel_detector
    ```
 
+---
+
 ### Параметры конфигурации
 Все необходимые параметры алгоритма находятся в файле __[default.yaml](https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar/blob/develop_ml/configs/default.yaml)__
 
