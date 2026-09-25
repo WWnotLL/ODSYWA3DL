@@ -193,6 +193,7 @@
 ---
 
 ### Тестирование работы алгоритма
+Разработанные unit-тесты расположены в папке __[tests](https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar/tree/develop_ml/tests)__
 Запустите unit-тесты ядра
    ```
    docker run --rm tunnel_detector:latest \
