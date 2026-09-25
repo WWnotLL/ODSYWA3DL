@@ -177,3 +177,30 @@
    ```
    docker stop tunnel_detector
    ```
+
+### Параметры конфигурации
+Все необходимые параметры алгоритма находятся в файле __[default.yaml](https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar/blob/develop_ml/configs/default.yaml)__
+
+Изменить параметры без пересборки образа можно, используя следующие команды:
+   ```
+   docker run -it --rm \
+    --net=host \
+    -v $(pwd)/configs:/ros2_ws/configs \
+    tunnel_detector:latest
+   ```
+
+### Тестирование работы алгоритма
+Запустите unit-тесты ядра
+   ```
+   docker run --rm tunnel_detector:latest \
+       bash -c "cd /ros2_ws && python -m pytest tests/ -v"
+   ```
+
+Запустите проверку на тестовой записи
+   ```
+   docker run --rm \
+       -v $(pwd)/data:/ros2_ws/data \
+       tunnel_detector:latest \
+       bash -c "python examples/run_frames.py doubleT_platform --frames 50"
+   ```
+
