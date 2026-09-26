@@ -119,6 +119,8 @@
    docker run -it --rm \
     --name tunnel_detector \
     --net=host \
+    -e OMP_NUM_THREADS=8 \
+    -e OPENBLAS_NUM_THREADS=8 \
     tunnel_detector:latest
    ```
 *3.2 Запуск с визуализацией*
