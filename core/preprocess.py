@@ -7,8 +7,9 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+from scipy.spatial import cKDTree
 
-from core.config import GroundConfig, NumericsConfig, PreprocessConfig
+from core.config import AxisConfig, GroundConfig, NumericsConfig, PlaneGuardConfig, PreprocessConfig
 
 
 class PreprocessError(ValueError):
@@ -100,6 +101,71 @@ def _collapse_by_sort(
     is_first[0] = True
     np.not_equal(ordered_key[1:], ordered_key[:-1], out=is_first[1:])
     return order[is_first], _partners_by_sort(order, is_first)
+
+
+def _cell_labels(cells: np.ndarray) -> np.ndarray:
+    order = np.lexsort((cells[:, 2], cells[:, 1], cells[:, 0]))
+    ordered = cells[order]
+    is_first = np.empty(order.size, dtype=bool)
+    is_first[0] = True
+    np.any(ordered[1:] != ordered[:-1], axis=1, out=is_first[1:])
+    labels = np.empty(order.size, dtype=np.int64)
+    labels[order] = np.cumsum(is_first) - 1
+    return labels
+
+
+def _pair_within_tolerance(unit: np.ndarray, tolerance: float) -> tuple[np.ndarray, np.ndarray]:
+    if unit.shape[0] < 2:
+        empty = np.zeros(0, dtype=np.int64)
+        return empty, empty
+    k = min(3, unit.shape[0])
+    distance, neighbour = cKDTree(unit).query(unit, k=k, distance_upper_bound=tolerance)
+    nearest = neighbour[:, 1]
+    single = np.isfinite(distance[:, 1])
+    if k == 3:
+        single &= ~np.isfinite(distance[:, 2])
+    mate = np.where(single, nearest, -1)
+    mutual = single & (mate[np.where(single, nearest, 0)] == np.arange(unit.shape[0]))
+    a = np.flatnonzero(mutual & (np.arange(unit.shape[0]) < mate))
+    return a, mate[a]
+
+
+def collapse_by_direction(
+    xyz: np.ndarray, ranges: np.ndarray, keep: str, digits: int, valid: np.ndarray,
+    tolerance: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    points = _as_points(xyz)
+    ranges = np.asarray(ranges)
+    if ranges.shape != (points.shape[0],):
+        raise PreprocessError("xyz и ranges должны быть одной длины")
+    if keep not in ("nearest", "farthest"):
+        raise PreprocessError(f"dual_return.keep: {keep!r} не поддерживается")
+    index = np.flatnonzero(valid)
+    if index.size == 0:
+        empty = np.zeros(0, dtype=np.int64)
+        return empty, empty
+    chosen = points[index].astype(np.float64)
+    norm = np.sqrt(np.einsum("ij,ij->i", chosen, chosen))
+    scaled = chosen / norm[:, None] * 10.0 ** digits
+    label = _cell_labels(np.rint(scaled).astype(np.int64))
+    lone = np.flatnonzero(np.bincount(label)[label] == 1)
+    if lone.size > 1:
+        shifted = _cell_labels(np.floor(scaled[lone]).astype(np.int64))
+        head = np.full(shifted.max() + 1, np.iinfo(np.int64).max)
+        np.minimum.at(head, shifted, label[lone])
+        label[lone] = head[shifted]
+        lone = np.flatnonzero(np.bincount(label)[label] == 1)
+        a, b = _pair_within_tolerance(chosen[lone] / norm[lone, None], tolerance)
+        label[lone[b]] = label[lone[a]]
+    order = np.lexsort((ranges[index] if keep == "nearest" else -ranges[index], label))
+    ordered = label[order]
+    is_first = np.empty(order.size, dtype=bool)
+    is_first[0] = True
+    np.not_equal(ordered[1:], ordered[:-1], out=is_first[1:])
+    first, partner = order[is_first], _partners_by_sort(order, is_first)
+    by_position = np.argsort(np.minimum.reduceat(order, np.flatnonzero(is_first)), kind="stable")
+    first, partner = first[by_position], partner[by_position]
+    return index[first], np.where(partner >= 0, index[np.maximum(partner, 0)], -1)
 
 
 def collapse_dual_returns(
@@ -337,9 +403,9 @@ def estimate_ground_plane(
 
     generator = np.random.default_rng(cfg.seed)
     pools = [pool for pool in _vertical_bands(zone, cfg) if pool.shape[0] >= 3]
-    hypotheses = [_plane_hypotheses(pool, cfg, generator) for pool in pools]
-    normals = np.concatenate([n for n, _ in hypotheses if n.shape[0]], axis=0) if hypotheses else np.zeros((0, 3))
-    offsets = np.concatenate([o for n, o in hypotheses if n.shape[0]], axis=0) if hypotheses else np.zeros(0)
+    hypotheses = [(n, o) for n, o in (_plane_hypotheses(pool, cfg, generator) for pool in pools) if n.shape[0]]
+    normals = np.concatenate([n for n, _ in hypotheses], axis=0) if hypotheses else np.zeros((0, 3))
+    offsets = np.concatenate([o for _, o in hypotheses], axis=0) if hypotheses else np.zeros(0)
     if normals.shape[0] == 0:
         raise PreprocessError(
             f"ни одна из гипотез RANSAC не прошла ограничение по наклону {cfg.max_tilt_deg}°"
@@ -430,6 +496,42 @@ def estimate_ground_plane(
     )
 
 
+def _rail_peak(lateral: np.ndarray, lo: float, hi: float, cfg: AxisConfig) -> tuple[float, float] | None:
+    band = lateral[(lateral > lo) & (lateral < hi)]
+    if band.size < cfg.rails_min_points:
+        return None
+    bins = np.arange(lo, hi + cfg.rails_histogram_bin_m, cfg.rails_histogram_bin_m)
+    counts, _ = np.histogram(band, bins=bins)
+    peak = int(np.argmax(counts))
+    half = cfg.rails_peak_halfwidth_bins
+    first, last = max(0, peak - half), min(counts.size, peak + half + 1)
+    if counts[first:last].sum() < cfg.rails_min_points:
+        return None
+    return float(bins[first]), float(bins[last])
+
+
+def rail_head_heights(
+    points: np.ndarray, normal: np.ndarray, offset: float, axis: AxisConfig,
+    x_min_m: float, x_max_m: float, percentile: float,
+) -> tuple[float, float, float] | None:
+    points = _as_points(points)
+    points = points[(points[:, 0] >= x_min_m) & (points[:, 0] < x_max_m)].astype(np.float64)
+    height = points @ normal + offset
+    near = (height > axis.rails_z_min_m) & (height < axis.rails_z_max_m)
+    lateral, height = points[near, 1], height[near]
+    left = _rail_peak(lateral, -axis.rails_search_far_m, -axis.rails_search_near_m, axis)
+    right = _rail_peak(lateral, axis.rails_search_near_m, axis.rails_search_far_m, axis)
+    if left is None or right is None:
+        return None
+    gauge = 0.5 * (right[0] + right[1]) - 0.5 * (left[0] + left[1])
+    if not axis.rails_gauge_min_m < gauge < axis.rails_gauge_max_m:
+        return None
+    on_left = (lateral >= left[0]) & (lateral < left[1])
+    on_right = (lateral >= right[0]) & (lateral < right[1])
+    return (float(np.percentile(height[on_left], percentile)),
+            float(np.percentile(height[on_right], percentile)), float(gauge))
+
+
 def level_to_ground(
     xyz: np.ndarray, plane: GroundPlane, numerics: NumericsConfig
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -465,12 +567,12 @@ class FrameTransform:
 class PreprocessResult:
     xyz: np.ndarray
     intensity: np.ndarray
-    ring: np.ndarray
-    t_rel: np.ndarray
+    ring: np.ndarray | None
+    t_rel: np.ndarray | None
     secondary_xyz: np.ndarray
     secondary_intensity: np.ndarray
-    secondary_ring: np.ndarray
-    secondary_t_rel: np.ndarray
+    secondary_ring: np.ndarray | None
+    secondary_t_rel: np.ndarray | None
     plane: GroundPlane
     stats: dict[str, Any]
     transform: FrameTransform
@@ -479,21 +581,28 @@ class PreprocessResult:
 def preprocess_frame(
     xyz: np.ndarray,
     intensity: np.ndarray,
-    ring: np.ndarray,
-    timestamp: np.ndarray,
+    ring: np.ndarray | None,
+    timestamp: np.ndarray | None,
     cfg: PreprocessConfig,
     *,
     plane: GroundPlane | None = None,
     tracker: "GroundTracker | None" = None,
+    frame_gap: int = 1,
 ) -> PreprocessResult:
     if plane is not None and tracker is not None:
         raise PreprocessError("укажите либо plane, либо tracker, но не оба сразу")
     points = _as_points(xyz)
     intensity = np.asarray(intensity)
-    ring = np.asarray(ring)
-    timestamp = np.asarray(timestamp)
-    if not (points.shape[0] == intensity.shape[0] == ring.shape[0] == timestamp.shape[0]):
-        raise PreprocessError("xyz, intensity, ring и timestamp должны быть одной длины")
+    if (ring is None) != (timestamp is None):
+        raise PreprocessError("ring и timestamp задаются вместе: оба массивом или оба None")
+    by_shot = ring is not None
+    if by_shot:
+        ring = np.asarray(ring)
+        timestamp = np.asarray(timestamp)
+        if not (points.shape[0] == intensity.shape[0] == ring.shape[0] == timestamp.shape[0]):
+            raise PreprocessError("xyz, intensity, ring и timestamp должны быть одной длины")
+    elif points.shape[0] != intensity.shape[0]:
+        raise PreprocessError("xyz и intensity должны быть одной длины")
 
     n_input = int(points.shape[0])
     keep = valid_mask(points, cfg.min_range_m)
@@ -503,9 +612,15 @@ def preprocess_frame(
 
 
     point_ranges = ranges_m(points)
-    primary, partner = collapse_dual_returns(
-        point_ranges, ring, timestamp, cfg.dual_return.keep, valid=keep
-    )
+    if by_shot:
+        primary, partner = collapse_dual_returns(
+            point_ranges, ring, timestamp, cfg.dual_return.keep, valid=keep
+        )
+    else:
+        primary, partner = collapse_by_direction(
+            points, point_ranges, cfg.dual_return.keep, cfg.dual_return.direction_digits, keep,
+            cfg.dual_return.direction_tolerance,
+        )
     alive = keep[primary]
     primary, partner = primary[alive], partner[alive]
 
@@ -519,15 +634,13 @@ def preprocess_frame(
            > cfg.dual_return.secondary_min_delta_m)
     )
     secondary = partner[divergent]
-
-
-    time_zero = float(timestamp[keep].min())
+    n_unpaired = int(np.count_nonzero(~(has_partner & keep[safe_partner])))
 
     rotated = to_rep103(points, cfg.axes.rotation, cfg.numerics)
     primary_xyz, secondary_xyz = rotated[primary], rotated[secondary]
 
     if tracker is not None:
-        plane = tracker.update(primary_xyz)
+        plane = tracker.update(primary_xyz, frame_gap=frame_gap)
     elif plane is None:
         plane = estimate_ground_plane(primary_xyz, cfg.ground)
     primary_xyz, level = level_to_ground(primary_xyz, plane, cfg.numerics)
@@ -550,16 +663,19 @@ def preprocess_frame(
         "plane_up_mass_ratio": plane.up_mass_ratio,
         "plane_up_source": plane.up_source,
         "plane_zone_points": plane.n_zone_points,
+        "dual_return_pairing": "shot" if by_shot else "direction",
+        "n_unpaired": n_unpaired,
     }
+    time_zero = float(timestamp[keep].min()) if by_shot else 0.0
     return PreprocessResult(
         xyz=primary_xyz,
         intensity=intensity[primary],
-        ring=ring[primary],
-        t_rel=timestamp[primary] - time_zero,
+        ring=ring[primary] if by_shot else None,
+        t_rel=timestamp[primary] - time_zero if by_shot else None,
         secondary_xyz=secondary_xyz,
         secondary_intensity=intensity[secondary],
-        secondary_ring=ring[secondary],
-        secondary_t_rel=timestamp[secondary] - time_zero,
+        secondary_ring=ring[secondary] if by_shot else None,
+        secondary_t_rel=timestamp[secondary] - time_zero if by_shot else None,
         plane=plane,
         stats=stats,
         transform=transform,
@@ -567,8 +683,13 @@ def preprocess_frame(
 
 
 class GroundTracker:
-    def __init__(self, cfg: GroundConfig) -> None:
+    def __init__(self, cfg: GroundConfig, guard: PlaneGuardConfig | None = None,
+                 axis: AxisConfig | None = None) -> None:
+        if guard is not None and (guard.rail_check_enabled or guard.hold_enabled) and axis is None:
+            raise ValueError("проверке по рельсам и удержанию плоскости нужен конфиг оси")
         self._cfg = cfg
+        self._guard = guard
+        self._axis = axis
         self.reset()
 
     def reset(self) -> None:
@@ -582,6 +703,14 @@ class GroundTracker:
         self.n_refit = 0
         self.n_forced = 0
         self.n_rejected_candidates = 0
+        self.n_rejected_planes = 0
+        self.n_held = 0
+        self._frames_since_accepted = 0
+        self._holding = False
+        self._hold_path_m = 0.0
+        self._hold_unknown_frames = 0
+        self._reacquire = False
+        self.last_guard: dict | None = None
 
     @property
     def expected_offset(self) -> float | None:
@@ -599,7 +728,31 @@ class GroundTracker:
     def plane(self) -> GroundPlane | None:
         return self._plane
 
-    def update(self, xyz: np.ndarray) -> GroundPlane:
+    @property
+    def guarded(self) -> bool:
+        return self._guard is not None and (self._guard.active or self._guard.hold_enabled)
+
+    def update(self, xyz: np.ndarray, *, frame_gap: int = 1) -> GroundPlane:
+        self.last_guard = None
+        candidate = self._propose(xyz)
+        if self._guard is None or not self._guard.active:
+            return self._accept(candidate)
+        reasons, heads = self._check(candidate, xyz, frame_gap)
+        if not reasons:
+            plane = self._accept(candidate)
+            self.last_guard = {"accepted": True, "held": False, "reasons": [], "rail_heads_m": heads}
+            return plane
+        return self._reject(reasons, heads, frame_gap)
+
+    def note_advance(self, advance_m: float | None, frame_gap: int = 1) -> None:
+        if not self._holding:
+            return
+        if advance_m is None:
+            self._hold_unknown_frames += frame_gap
+        else:
+            self._hold_path_m += advance_m
+
+    def _propose(self, xyz: np.ndarray) -> GroundPlane:
         cfg = self._cfg
         if self._plane is None or self._since_full >= cfg.replan_every_n_frames:
             return self._full(xyz)
@@ -624,6 +777,12 @@ class GroundTracker:
         if int(np.count_nonzero(inliers)) < 3:
             self.n_forced += 1
             return self._full(xyz)
+        guard = self._guard
+        if guard is not None and guard.refit_limits_enabled:
+            too_steep = abs(float(normal[2])) < np.cos(np.radians(cfg.max_tilt_deg))
+            if too_steep or int(np.count_nonzero(inliers)) < guard.refit_min_inliers:
+                self.n_forced += 1
+                return self._full(xyz)
         residual = _residual(zone[inliers], normal, offset)
         inlier_fraction = float(np.count_nonzero(inliers)) / float(max(zone.shape[0], 1))
 
@@ -632,7 +791,9 @@ class GroundTracker:
             self.n_forced += 1
             return self._full(xyz)
 
-        self._plane = GroundPlane(
+        self._since_full += 1
+        self.n_refit += 1
+        return GroundPlane(
             normal=normal,
             offset=offset,
             inlier_fraction=inlier_fraction,
@@ -644,11 +805,6 @@ class GroundTracker:
             n_candidates=1,
             n_rejected=0,
         )
-        self._since_full += 1
-        self.n_refit += 1
-        self._history.append(offset)
-        self._normals.append(normal)
-        return self._plane
 
     def _full(self, xyz: np.ndarray) -> GroundPlane:
         plane = estimate_ground_plane(
@@ -657,11 +813,81 @@ class GroundTracker:
             expected_offset=self.expected_offset,
             expected_normal=self.expected_normal,
         )
-        self._plane = plane
         self._since_full = 0
         self.n_full += 1
         self.n_rejected_candidates += plane.n_rejected
-        self._history.append(plane.offset)
-        self._normals.append(plane.normal)
         return plane
 
+    def _accept(self, plane: GroundPlane) -> GroundPlane:
+        self._plane = plane
+        self._history.append(plane.offset)
+        self._normals.append(plane.normal)
+        self._frames_since_accepted = 0
+        self._holding = False
+        self._hold_path_m = 0.0
+        self._hold_unknown_frames = 0
+        self._reacquire = False
+        return plane
+
+    def _check(self, candidate: GroundPlane, xyz: np.ndarray,
+               frame_gap: int) -> tuple[list[str], list[float] | None]:
+        guard = self._guard
+        reasons: list[str] = []
+        accepted = self._plane
+        heads, in_window = None, True
+        if self._reacquire or guard.rail_check_enabled:
+            heads, in_window = self._rail_heads(candidate, xyz)
+        if self._reacquire:
+            if heads is None:
+                reasons.append("reacquire_no_rails")
+            elif not in_window:
+                reasons.append("rail_heads")
+        if guard.plausibility_enabled and accepted is not None:
+            if not self._reacquire:
+                cosine = float(candidate.normal @ accepted.normal)
+                step = float(np.degrees(np.arccos(np.clip(abs(cosine), 0.0, 1.0))))
+                if step > guard.max_tilt_step_deg * frame_gap:
+                    reasons.append("tilt_step")
+                aligned = candidate.offset if cosine >= 0.0 else -candidate.offset
+                if abs(aligned - accepted.offset) > guard.max_offset_step_m * frame_gap:
+                    reasons.append("offset_step")
+            if len(self._normals) == self._cfg.history_length:
+                base = self.expected_normal
+                from_base = float(np.degrees(np.arccos(np.clip(abs(float(candidate.normal @ base)), 0.0, 1.0))))
+                if from_base > guard.max_tilt_from_base_deg:
+                    reasons.append("tilt_from_base")
+        if guard.rail_check_enabled and not self._reacquire and not in_window:
+            reasons.append("rail_heads")
+        return reasons, heads
+
+    def _rail_heads(self, candidate: GroundPlane, xyz: np.ndarray) -> tuple[list[float] | None, bool]:
+        guard = self._guard
+        found = rail_head_heights(xyz, candidate.normal, candidate.offset, self._axis,
+                                  guard.rail_x_min_m, guard.rail_x_max_m, guard.rail_head_percentile)
+        if found is None:
+            return None, True
+        in_window = all(guard.rail_head_min_m <= h <= guard.rail_head_max_m for h in found[:2])
+        return [round(found[0], 4), round(found[1], 4)], in_window
+
+    def _reject(self, reasons: list[str], heads: list[float] | None, frame_gap: int) -> GroundPlane:
+        self.n_rejected_planes += 1
+        self._frames_since_accepted += frame_gap
+        guard, axis = self._guard, self._axis
+        expired = False
+        if guard.hold_enabled and self._plane is not None:
+            expired = (self._hold_unknown_frames > axis.max_staleness_frames
+                       or self._hold_path_m > axis.max_hold_path_m)
+            if not expired:
+                self._holding = True
+                self.n_held += 1
+                self.last_guard = {"accepted": False, "held": True, "reasons": reasons,
+                                   "rail_heads_m": heads, "hold_path_m": round(self._hold_path_m, 2),
+                                   "hold_unknown_frames": self._hold_unknown_frames}
+                return self._plane
+        self._holding = False
+        self._reacquire = self._reacquire or expired
+        self.last_guard = {"accepted": False, "held": False, "reasons": reasons,
+                           "rail_heads_m": heads, "hold_expired": expired}
+        raise PreprocessError(
+            "плоскость основания отвергнута: " + ", ".join(reasons)
+            + ("; удержание исчерпано" if expired else ""))

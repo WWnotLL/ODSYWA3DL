@@ -107,3 +107,78 @@ def test_gauge_floor_comes_only_from_the_profile(cfg: Config, raw_config: dict) 
     assert cfg.gauge.z_min_m == pytest.approx(float(cfg.gauge.profile_height_m.min()))
     assert cfg.gauge.z_min_m == pytest.approx(0.025), "нижняя вершина по рис. 7"
 
+
+
+def test_depth_threshold_can_be_switched_off(raw_config):
+    off = copy.deepcopy(raw_config)
+    off["gauge"]["train"]["enabled"] = False
+    off["detector"]["min_depth_m"] = None
+    assert Config.from_dict(off).detector.min_depth_m is None
+    off["detector"]["min_depth_m"] = -0.01
+    with pytest.raises(ConfigError, match="min_depth_m"):
+        Config.from_dict(off)
+
+
+def test_direction_tolerance_must_be_positive(raw_config):
+    broken = copy.deepcopy(raw_config)
+    broken["preprocess"]["dual_return"]["direction_tolerance"] = 0.0
+    with pytest.raises(ConfigError, match="direction_tolerance"):
+        Config.from_dict(broken)
+
+
+def test_plane_guard_is_on_by_default_and_validated(cfg, raw_config):
+    guard = cfg.preprocess.plane_guard
+    assert (guard.refit_limits_enabled and guard.plausibility_enabled
+            and guard.hold_enabled and guard.rail_check_enabled)
+    assert cfg.confirm.verdict.latch_through_unchecked is True
+    broken = copy.deepcopy(raw_config)
+    broken["preprocess"]["plane_guard"]["rail_check"]["head_min_m"] = 0.5
+    with pytest.raises(ConfigError, match="head_min_m"):
+        Config.from_dict(broken)
+
+
+def test_plausibility_without_hold_and_latch_is_rejected(raw_config):
+    broken = copy.deepcopy(raw_config)
+    broken["preprocess"]["plane_guard"]["hold"]["enabled"] = False
+    broken["confirm"]["verdict"]["latch_through_unchecked"] = False
+    with pytest.raises(ConfigError, match="plausibility"):
+        Config.from_dict(broken)
+    broken["preprocess"]["plane_guard"]["hold"]["enabled"] = True
+    with pytest.raises(ConfigError, match="plausibility"):
+        Config.from_dict(broken)
+    broken["confirm"]["verdict"]["latch_through_unchecked"] = True
+    assert Config.from_dict(broken).preprocess.plane_guard.plausibility_enabled
+
+
+def test_gauge_heights_can_be_counted_from_the_base(cfg, raw_config):
+    assert cfg.gauge.height_reference == "rail_head"
+    from_base = copy.deepcopy(raw_config)
+    from_base["gauge"]["height_reference"] = "base"
+    gauge = Config.from_dict(from_base).gauge
+    lift = cfg.gauge.rail_head_offset_m
+    assert gauge.profile_height_m == pytest.approx(cfg.gauge.profile_height_m - lift)
+    assert gauge.z_max_m == pytest.approx(cfg.gauge.z_max_m - lift)
+    broken = copy.deepcopy(raw_config)
+    broken["gauge"]["height_reference"] = "sleeper"
+    with pytest.raises(ConfigError, match="height_reference"):
+        Config.from_dict(broken)
+
+
+def test_floor_above_rail_head_needs_the_rail_head(raw_config):
+    broken = copy.deepcopy(raw_config)
+    broken["gauge"]["train"]["enabled"] = False
+    broken["detector"]["floor_above_rail_head_m"] = 0.02
+    broken["gauge"]["rail_head_offset_m"] = None
+    with pytest.raises(ConfigError, match="floor_above_rail_head_m"):
+        Config.from_dict(broken)
+
+
+def test_train_gauge_needs_a_depth_threshold(cfg, raw_config):
+    assert cfg.gauge.train_enabled is True and cfg.gauge.rail_mask_follow_heads is False
+    broken = copy.deepcopy(raw_config)
+    broken["gauge"]["train"]["enabled"] = True
+    broken["detector"]["min_depth_m"] = None
+    with pytest.raises(ConfigError, match="gauge.train"):
+        Config.from_dict(broken)
+    broken["detector"]["min_depth_m"] = 0.0
+    assert Config.from_dict(broken).gauge.train_enabled

@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import resource
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
+from threadpoolctl import threadpool_info
 
 from core.config import Config
 from core.pipeline import ObstacleDetector
@@ -24,23 +26,38 @@ def peak_rss_mb() -> float:
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
 
 
+def blas_threads() -> int:
+    return max((pool["num_threads"] for pool in threadpool_info() if pool["user_api"] == "blas"),
+               default=0)
+
+
 def run(cfg: Config, record: str, stride: int, limit: int | None,
-        timings: list[dict], confirm: bool) -> list[dict]:
+        timings: list[dict], confirm: bool, without_ring_time: bool = False) -> list[dict]:
     detector = ObstacleDetector(cfg, confirm=confirm)
+    threads = blas_threads()
     rows: list[dict] = []
-    for frame in iter_frames(cfg.data.path(record), cfg.bag, stride=stride, limit=limit):
+    for frame in iter_frames(cfg.data.path(record), cfg.bag, stride=stride, limit=limit,
+                             partial=without_ring_time):
+        ring, timestamp = (None, None) if without_ring_time else (frame.ring, frame.timestamp)
         outcome = detector.process(
-            frame.xyz, frame.intensity, frame.ring, frame.timestamp,
+            frame.xyz, frame.intensity, ring, timestamp,
             frame.stamp_ns, frame_gap=stride,
         )
-
-        axis = outcome.debug["axis"]
-        if axis["state"] == "lost":
-            axis = None
 
         row = outcome.to_dict()
         row["frame"] = int(frame.index)
         row["stamp_ns"] = int(frame.stamp_ns)
+        if not outcome.debug["checked"]:
+            row.update(staleness_frames=0, axis_source="none", axis_method=None, x_traced_m=None,
+                       axis_meets_clearance=None, axis_state="unchecked",
+                       axis_cross_check_reason=None, axis_reason=outcome.debug["reason"],
+                       candidates_found=False, raw=None, advance_m=None, stop_axis_loss=False)
+            rows.append(row)
+            continue
+
+        axis = outcome.debug["axis"]
+        if axis["state"] == "lost":
+            axis = None
         row["staleness_frames"] = 0 if axis is None else axis["staleness_frames"]
         row["axis_source"] = "none" if axis is None else axis["source"]
         row["axis_method"] = None if axis is None else axis["method"]
@@ -70,6 +87,8 @@ def run(cfg: Config, record: str, stride: int, limit: int | None,
             "detect_ms": stage["detect"],
             "confirm_ms": stage["confirm"],
             "total_ms": stage["total"],
+            "blas_threads": threads,
+            "cpu_count": os.cpu_count(),
         })
         if len(rows) % PROGRESS_EVERY == 0:
             print(f"    {record}: {len(rows)} кадров, {timings[-1]['total_ms']:.0f} мс/кадр",
@@ -149,9 +168,16 @@ def summarise(rows: list[dict]) -> None:
 def write_timings(path: Path, timings: list[dict]) -> None:
     if not timings:
         return
+    fresh = {row["record"] for row in timings}
+    kept = []
+    if path.is_file():
+        with path.open(encoding="utf-8", newline="") as handle:
+            kept = [row for row in csv.DictReader(handle) if row["record"] not in fresh]
+    fields = list(timings[0].keys())
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(timings[0].keys()))
+        writer = csv.DictWriter(handle, fieldnames=fields, restval="")
         writer.writeheader()
+        writer.writerows({key: row.get(key, "") for key in fields} for row in kept)
         writer.writerows(timings)
 
 
@@ -165,6 +191,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="включить подтверждение K из M (по умолчанию из конфига)")
     parser.add_argument("--no-confirm", dest="confirm", action="store_false",
                         help="только слой A: строки прогона остаются сырыми")
+    parser.add_argument("--without-ring-time", action="store_true",
+                        help="не передавать ядру ring и timestamp: пары эха ищутся по направлению")
     parser.add_argument("--out", default="runs/layer_a")
     args = parser.parse_args(argv)
 
@@ -182,7 +210,8 @@ def main(argv: list[str] | None = None) -> int:
     for record in args.records:
         print(f"\n=== {record}", flush=True)
         before = peak_rss_mb()
-        rows = run(cfg, record, args.stride, args.limit, timings, args.confirm)
+        rows = run(cfg, record, args.stride, args.limit, timings, args.confirm,
+                   args.without_ring_time)
         summarise(rows)
 
 

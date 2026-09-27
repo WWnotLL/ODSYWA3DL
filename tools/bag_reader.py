@@ -30,13 +30,16 @@ class RawFrame:
     stamp_ns: int
     xyz: np.ndarray
     intensity: np.ndarray
-    ring: np.ndarray
-    timestamp: np.ndarray
+    ring: np.ndarray | None
+    timestamp: np.ndarray | None
     frame_id: str
     width: int
 
 
-def point_dtype(message, cfg: BagConfig) -> np.dtype:
+REQUIRED_FIELDS = ("x", "y", "z")
+
+
+def point_dtype(message, cfg: BagConfig, *, partial: bool = False) -> np.dtype:
     names, formats, offsets = [], [], []
     for field in message.fields:
         if field.count != 1:
@@ -47,10 +50,11 @@ def point_dtype(message, cfg: BagConfig) -> np.dtype:
         formats.append(POINTFIELD_DTYPES[field.datatype])
         offsets.append(int(field.offset))
 
-    missing = [name for name in cfg.expected_fields if name not in names]
+    required = REQUIRED_FIELDS if partial else cfg.expected_fields
+    missing = [name for name in required if name not in names]
     if missing:
         raise BagReadError(f"в сообщении нет ожидаемых полей {missing}, есть {names}")
-    if int(message.point_step) != cfg.expected_point_step:
+    if not partial and int(message.point_step) != cfg.expected_point_step:
         raise BagReadError(
             f"point_step={message.point_step}, в конфиге ожидается {cfg.expected_point_step}"
         )
@@ -92,7 +96,8 @@ def _release_page_cache(bag_dir: Path) -> None:
 
 
 def iter_frames(
-    bag_dir: str | Path, cfg: BagConfig, *, limit: int | None = None, stride: int = 1
+    bag_dir: str | Path, cfg: BagConfig, *, limit: int | None = None, stride: int = 1,
+    partial: bool = False,
 ) -> Iterator[RawFrame]:
     bag_dir = Path(bag_dir)
     if not (bag_dir / "metadata.yaml").is_file():
@@ -122,16 +127,18 @@ def iter_frames(
                 if limit is not None and emitted >= limit:
                     return
                 message = reader.deserialize(raw, connection.msgtype)
-                dtype = point_dtype(message, cfg)
+                dtype = point_dtype(message, cfg, partial=partial)
                 count = int(message.width) * int(message.height)
                 record = np.frombuffer(message.data, dtype=dtype, count=count)
+                names = record.dtype.names
                 yield RawFrame(
                     index=index,
                     stamp_ns=int(stamp_ns),
                     xyz=np.stack([record["x"], record["y"], record["z"]], axis=1),
-                    intensity=np.asarray(record["intensity"]),
-                    ring=np.asarray(record["ring"]),
-                    timestamp=np.asarray(record["timestamp"]),
+                    intensity=(np.asarray(record["intensity"]) if "intensity" in names
+                               else np.zeros(count, dtype=np.float32)),
+                    ring=np.asarray(record["ring"]) if "ring" in names else None,
+                    timestamp=np.asarray(record["timestamp"]) if "timestamp" in names else None,
                     frame_id=str(message.header.frame_id),
                     width=count,
                 )

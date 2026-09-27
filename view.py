@@ -44,15 +44,18 @@ else:
         else "/home/denimele/hackathon/for_hackathon/doubleT_obstacle"
     )
     N = int(sys.argv[2]) if len(sys.argv) > 2 else 30
+    START = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 
-DT = np.dtype(
-    {
-        "names": ["x", "y", "z", "intensity", "ring", "timestamp"],
-        "formats": ["<f4", "<f4", "<f4", "<f4", "<u2", "<f8"],
-        "offsets": [0, 4, 8, 12, 16, 18],
-        "itemsize": 26,
-    }
-)
+POINTFIELD_DTYPES = {1: "<i1", 2: "<u1", 3: "<i2", 4: "<u2", 5: "<i4", 6: "<u4", 7: "<f4", 8: "<f8"}
+
+
+def message_dtype(m) -> np.dtype:
+    return np.dtype({
+        "names": [f.name for f in m.fields],
+        "formats": [POINTFIELD_DTYPES[f.datatype] for f in m.fields],
+        "offsets": [f.offset for f in m.fields],
+        "itemsize": m.point_step,
+    })
 
 frames = []
 views = []
@@ -78,15 +81,20 @@ elif DETECT:
     frames = [(v.points, v.intensity / 255.0) for v in views]
 else:
     with AnyReader([BAG], default_typestore=ts) as r:
-        for i, (c, t, raw) in enumerate(r.messages(connections=list(r.connections))):
-            if i >= N:
+        clouds = [c for c in r.connections if c.msgtype == "sensor_msgs/msg/PointCloud2"]
+        for i, (c, t, raw) in enumerate(r.messages(connections=clouds)):
+            if i < START:
+                continue
+            if i >= START + N:
                 break
             m = r.deserialize(raw, c.msgtype)
-            a = np.frombuffer(m.data, dtype=DT, count=m.width * m.height)
+            a = np.frombuffer(m.data, dtype=message_dtype(m), count=m.width * m.height)
             xyz = np.stack([a["x"], a["y"], a["z"]], 1)
             keep = np.linalg.norm(xyz, axis=1) > 1e-6
-            frames.append((xyz[keep], a["intensity"][keep] / 255.0))
-            print(f"\rзагрузка {i + 1}/{N}", end="", flush=True)
+            shade = (a["intensity"][keep] / 255.0 if "intensity" in a.dtype.names
+                     else np.full(int(keep.sum()), 0.5))
+            frames.append((xyz[keep], shade))
+            print(f"\rзагрузка {i + 1 - START}/{N}", end="", flush=True)
 print(f"\nготово: {len(frames)} кадров")
 if not frames:
     raise SystemExit(f"{BAG}: нечего показывать — кадров не найдено")

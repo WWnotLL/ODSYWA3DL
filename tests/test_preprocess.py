@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -14,11 +16,13 @@ from core.preprocess import (
     PreprocessError,
     _up_from_chord,
     check_proper_rotation,
+    collapse_by_direction,
     collapse_dual_returns,
     echoes_per_shot,
     estimate_ground_plane,
     level_to_ground,
     preprocess_frame,
+    rail_head_heights,
     ranges_m,
     rotation_between,
     shot_key,
@@ -26,7 +30,7 @@ from core.preprocess import (
     valid_mask,
 )
 from tests.synthetic import (circular_section_rep103, source_frame, spurious_low_plane_rep103,
-                             station_rep103, to_source_frame, tunnel_rep103)
+                             station_rep103, to_source_frame, track_rep103, tunnel_rep103)
 
 
 def test_valid_mask_drops_zero_points(cfg):
@@ -580,3 +584,292 @@ def test_plane_and_tracker_are_mutually_exclusive(cfg):
             tracker=GroundTracker(cfg.preprocess.ground),
         )
 
+
+
+def _one_shot_per_direction(scene: np.ndarray) -> np.ndarray:
+    unit = np.round(scene / np.linalg.norm(scene, axis=1)[:, None], 4)
+    _, first = np.unique(unit, axis=0, return_index=True)
+    return scene[np.sort(first)]
+
+
+def _distinct_frame(**kwargs) -> dict:
+    return source_frame(_one_shot_per_direction(tunnel_rep103()), secondary_scale=2.0, **kwargs)
+
+
+def _shot_pairs(frame: dict, keep: str = "nearest") -> tuple[np.ndarray, np.ndarray]:
+    valid = valid_mask(frame["xyz"], 1e-6)
+    primary, partner = collapse_dual_returns(ranges_m(frame["xyz"]), frame["ring"],
+                                             frame["timestamp"], keep, valid=valid)
+    alive = valid[primary]
+    return primary[alive], partner[alive]
+
+
+@pytest.mark.parametrize("layout", ["blocks", "interleaved"])
+@pytest.mark.parametrize("keep", ["nearest", "farthest"])
+def test_direction_pairs_are_the_shot_pairs_in_the_same_order(layout, keep):
+    frame = _distinct_frame(layout=layout)
+    valid = valid_mask(frame["xyz"], 1e-6)
+    primary, partner = collapse_by_direction(frame["xyz"], ranges_m(frame["xyz"]), keep, 5, valid, 1e-6)
+    expected_primary, expected_partner = _shot_pairs(frame, keep)
+    np.testing.assert_array_equal(primary, expected_primary)
+    np.testing.assert_array_equal(partner, expected_partner)
+
+
+def test_direction_pairing_skips_empty_points():
+    xyz = np.array([[0.0, 0.0, 0.0], [0.0, -25.0, 0.0], [0.0, -50.0, 0.0]], dtype=np.float32)
+    valid = valid_mask(xyz, 1e-6)
+    primary, partner = collapse_by_direction(xyz, ranges_m(xyz), "nearest", 5, valid, 1e-6)
+    assert primary.tolist() == [1] and partner.tolist() == [2]
+
+
+def _with_points_off_the_rays(frame: dict) -> tuple[np.ndarray, np.ndarray, int]:
+    face = np.stack(np.meshgrid(np.linspace(-0.5, 0.5, 7), [-40.0],
+                                np.linspace(-1.0, 0.6, 9)), axis=-1).reshape(-1, 3)
+    xyz = np.concatenate([frame["xyz"], face.astype(np.float32)])
+    intensity = np.concatenate([frame["intensity"], np.full(face.shape[0], 7.0, np.float32)])
+    return xyz, intensity, face.shape[0]
+
+
+def test_points_off_the_rays_are_kept_and_counted_as_unpaired(cfg):
+    frame = _distinct_frame()
+    xyz, intensity, n_face = _with_points_off_the_rays(frame)
+    result = preprocess_frame(xyz, intensity, None, None, cfg.preprocess)
+    assert result.stats["dual_return_pairing"] == "direction"
+    assert result.stats["n_unpaired"] == n_face
+    assert result.stats["n_primary"] == frame["n_live_shots"] + n_face
+    assert np.count_nonzero(result.intensity == 7.0) == n_face
+
+
+def test_preprocess_without_ring_and_time_matches_the_full_fields(cfg):
+    frame = _distinct_frame()
+    full = preprocess_frame(frame["xyz"], frame["intensity"], frame["ring"], frame["timestamp"],
+                            cfg.preprocess)
+    bare = preprocess_frame(frame["xyz"], frame["intensity"], None, None, cfg.preprocess)
+    assert full.xyz.tobytes() == bare.xyz.tobytes()
+    assert full.secondary_xyz.tobytes() == bare.secondary_xyz.tobytes()
+    assert full.plane.normal.tobytes() == bare.plane.normal.tobytes()
+    assert full.stats["n_unpaired"] == bare.stats["n_unpaired"] == 0
+    assert bare.ring is None and bare.t_rel is None and bare.secondary_ring is None
+
+
+def test_ring_without_timestamp_is_rejected(cfg):
+    frame = source_frame()
+    with pytest.raises(PreprocessError, match="вместе"):
+        preprocess_frame(frame["xyz"], frame["intensity"], frame["ring"], None, cfg.preprocess)
+
+
+def test_a_pair_straddling_a_cell_border_is_still_paired():
+    edge = 0.123455
+    points = []
+    for x, r in ((edge - 1e-9, 20.0), (edge + 1e-9, 23.0)):
+        z = 0.1
+        points.append(r * np.array([x, -np.sqrt(1.0 - x * x - z * z), z]))
+    xyz = np.array(points)
+    assert np.rint(xyz[0, 0] / 20.0 * 1e5) != np.rint(xyz[1, 0] / 23.0 * 1e5)
+    primary, partner = collapse_by_direction(xyz, ranges_m(xyz), "nearest", 5, np.ones(2, bool), 1e-6)
+    assert primary.tolist() == [0] and partner.tolist() == [1]
+
+
+def _towards(x: float, y: float) -> np.ndarray:
+    return np.array([x, y, -np.sqrt(1.0 - x * x - y * y)])
+
+
+def test_a_pair_straddling_both_grids_is_paired_by_tolerance():
+    x, y, step = -0.42458, -0.903015, 1e-8
+    xyz = np.array([4.152 * _towards(x + step, y - step), 5.576 * _towards(x - step, y + step)])
+    scaled = xyz / np.linalg.norm(xyz, axis=1)[:, None] * 1e5
+    assert np.any(np.rint(scaled[0]) != np.rint(scaled[1]))
+    assert np.any(np.floor(scaled[0]) != np.floor(scaled[1]))
+    primary, partner = collapse_by_direction(xyz, ranges_m(xyz), "nearest", 5, np.ones(2, bool), 1e-6)
+    assert primary.tolist() == [0] and partner.tolist() == [1]
+
+
+def test_three_points_within_tolerance_stay_unpaired():
+    x, y, step = -0.3, -0.9, 3e-5
+    three = np.array([10.0 * _towards(x + i * step, y) for i in range(3)])
+    primary, partner = collapse_by_direction(three, ranges_m(three), "nearest", 5,
+                                             np.ones(3, bool), 1e-4)
+    assert primary.tolist() == [0, 1, 2] and partner.tolist() == [-1, -1, -1]
+    two = three[:2]
+    primary, partner = collapse_by_direction(two, ranges_m(two), "nearest", 5,
+                                             np.ones(2, bool), 1e-4)
+    assert primary.tolist() == [0] and partner.tolist() == [1]
+
+
+LIDAR_HEIGHT_M = 1.31
+
+
+def _guard_on(cfg):
+    return dataclasses.replace(
+        cfg.preprocess.plane_guard, refit_limits_enabled=True, plausibility_enabled=True,
+        hold_enabled=True, rail_check_enabled=True)
+
+
+def _guarded_tracker(cfg):
+    return GroundTracker(cfg.preprocess.ground, _guard_on(cfg), cfg.axis)
+
+
+def _track_frame():
+    return track_rep103() - np.array([0.0, 0.0, LIDAR_HEIGHT_M])
+
+
+def _low_wide_object_frame(height_m=0.2, x=(5.0, 40.0), half_width=3.0):
+    scene = track_rep103()
+    covered = (scene[:, 0] >= x[0]) & (scene[:, 0] <= x[1]) & (np.abs(scene[:, 1]) <= half_width) \
+        & (scene[:, 2] <= height_m)
+    gx, gy = np.meshgrid(np.arange(x[0], x[1], 0.1), np.arange(-half_width, half_width, 0.1), indexing="ij")
+    top = np.stack([gx.ravel(), gy.ravel(), np.full(gx.size, height_m)], axis=1)
+    return np.concatenate([scene[~covered], top]) - np.array([0.0, 0.0, LIDAR_HEIGHT_M])
+
+
+def _settle(tracker, cfg):
+    for _ in range(cfg.preprocess.ground.history_length):
+        plane = tracker.update(_track_frame())
+    return plane
+
+
+def test_plane_on_a_low_wide_object_is_not_accepted(cfg):
+    tracker = _guarded_tracker(cfg)
+    floor = _settle(tracker, cfg)
+    expected = tracker.expected_offset
+    held = tracker.update(_low_wide_object_frame())
+    assert tracker.last_guard["accepted"] is False and tracker.last_guard["held"] is True
+    assert "offset_step" in tracker.last_guard["reasons"]
+    assert held.offset == pytest.approx(floor.offset, abs=1e-6)
+    assert tracker.expected_offset == pytest.approx(expected, abs=1e-9)
+
+
+def test_without_the_guard_the_low_wide_object_becomes_the_floor(cfg):
+    tracker = GroundTracker(cfg.preprocess.ground)
+    floor = _settle(tracker, cfg)
+    moved = tracker.update(_low_wide_object_frame())
+    assert floor.offset - moved.offset == pytest.approx(0.2, abs=0.02)
+
+
+def test_hold_expires_after_the_axis_hold_path(cfg):
+    tracker = _guarded_tracker(cfg)
+    _settle(tracker, cfg)
+    step = 0.4 * cfg.axis.max_hold_path_m
+    tracker.update(_low_wide_object_frame())
+    tracker.note_advance(step)
+    tracker.update(_low_wide_object_frame())
+    tracker.note_advance(step)
+    tracker.update(_low_wide_object_frame())
+    tracker.note_advance(step)
+    with pytest.raises(PreprocessError, match="удержание исчерпано"):
+        tracker.update(_low_wide_object_frame())
+    assert tracker.last_guard["hold_expired"] is True
+
+
+def test_accepted_floor_after_a_hold_resets_it(cfg):
+    tracker = _guarded_tracker(cfg)
+    floor = _settle(tracker, cfg)
+    tracker.update(_low_wide_object_frame())
+    tracker.note_advance(5.0)
+    back = tracker.update(_track_frame())
+    assert tracker.last_guard["accepted"] is True
+    assert back.offset == pytest.approx(floor.offset, abs=1e-3)
+
+
+def test_without_hold_a_rejected_plane_makes_the_frame_unusable(cfg):
+    guard = dataclasses.replace(_guard_on(cfg), hold_enabled=False)
+    tracker = GroundTracker(cfg.preprocess.ground, guard, cfg.axis)
+    _settle(tracker, cfg)
+    with pytest.raises(PreprocessError, match="отвергнута"):
+        tracker.update(_low_wide_object_frame())
+
+
+def _steep_band(tilt_deg=30.0):
+    gx, gy = np.meshgrid(np.linspace(5.0, 40.0, 350), np.linspace(-0.4, 0.4, 40), indexing="ij")
+    z = -LIDAR_HEIGHT_M + np.tan(np.radians(tilt_deg)) * gy
+    return np.stack([gx.ravel(), gy.ravel(), z.ravel()], axis=1)
+
+
+def test_without_refit_limits_a_steep_refinement_is_taken(cfg):
+    tracker = GroundTracker(cfg.preprocess.ground)
+    tracker.update(_track_frame())
+    plane = tracker.update(_steep_band())
+    tilt = np.degrees(np.arccos(abs(plane.normal[2])))
+    assert plane.source == "refit" and tilt == pytest.approx(30.0, abs=0.5)
+
+
+def test_steep_refinement_is_not_taken_with_refit_limits(cfg):
+    guard = dataclasses.replace(cfg.preprocess.plane_guard, refit_limits_enabled=True)
+    tracker = GroundTracker(cfg.preprocess.ground, guard, cfg.axis)
+    tracker.update(_track_frame())
+    before = tracker.n_forced
+    with pytest.raises(PreprocessError):
+        tracker.update(_steep_band())
+    assert tracker.n_forced == before + 1
+
+
+def _exhaust_hold_standing(tracker, cfg):
+    for _ in range(cfg.axis.max_staleness_frames + 1):
+        held = tracker.update(_low_wide_object_frame())
+        assert tracker.last_guard["held"] is True
+        tracker.note_advance(None)
+    return held
+
+
+def test_standing_train_does_not_take_a_wide_object_for_the_floor(cfg):
+    tracker = _guarded_tracker(cfg)
+    floor = _settle(tracker, cfg)
+    _exhaust_hold_standing(tracker, cfg)
+    for _ in range(3):
+        with pytest.raises(PreprocessError, match="отвергнута"):
+            tracker.update(_low_wide_object_frame())
+        assert tracker.last_guard["accepted"] is False
+    assert tracker.plane.offset == pytest.approx(floor.offset, abs=1e-6)
+
+
+def test_after_the_hold_the_floor_is_reacquired_by_the_rails(cfg):
+    tracker = _guarded_tracker(cfg)
+    floor = _settle(tracker, cfg)
+    _exhaust_hold_standing(tracker, cfg)
+    with pytest.raises(PreprocessError):
+        tracker.update(_low_wide_object_frame())
+    back = tracker.update(_track_frame())
+    assert tracker.last_guard["accepted"] is True
+    assert tracker.last_guard["rail_heads_m"] is not None
+    assert back.offset == pytest.approx(floor.offset, abs=1e-3)
+
+
+def _guard_without_rail_check(cfg, **window):
+    guard = dataclasses.replace(_guard_on(cfg), rail_check_enabled=False, **window)
+    return GroundTracker(cfg.preprocess.ground, guard, cfg.axis)
+
+
+def test_reacquire_by_the_rails_works_without_the_rail_check_flag(cfg):
+    tracker = _guard_without_rail_check(cfg)
+    floor = _settle(tracker, cfg)
+    _exhaust_hold_standing(tracker, cfg)
+    with pytest.raises(PreprocessError, match="удержание исчерпано"):
+        tracker.update(_low_wide_object_frame())
+    with pytest.raises(PreprocessError, match="reacquire_no_rails"):
+        tracker.update(_low_wide_object_frame())
+    back = tracker.update(_track_frame())
+    assert tracker.last_guard["accepted"] is True
+    assert tracker.last_guard["rail_heads_m"] is not None
+    assert back.offset == pytest.approx(floor.offset, abs=1e-3)
+
+
+def test_reacquire_takes_the_head_window_from_the_rail_check_keys(cfg):
+    tracker = _guard_without_rail_check(cfg, rail_head_max_m=0.20)
+    _settle(tracker, cfg)
+    _exhaust_hold_standing(tracker, cfg)
+    with pytest.raises(PreprocessError):
+        tracker.update(_low_wide_object_frame())
+    with pytest.raises(PreprocessError, match="rail_heads"):
+        tracker.update(_track_frame())
+    assert tracker.last_guard["accepted"] is False
+
+
+def test_rail_heads_are_found_at_the_rail_head_height(cfg):
+    frame = _track_frame()
+    heads = rail_head_heights(frame, np.array([0.0, 0.0, 1.0]), LIDAR_HEIGHT_M, cfg.axis,
+                              cfg.preprocess.plane_guard.rail_x_min_m,
+                              cfg.preprocess.plane_guard.rail_x_max_m,
+                              cfg.preprocess.plane_guard.rail_head_percentile)
+    assert heads is not None
+    assert heads[0] == pytest.approx(0.23, abs=0.01) and heads[1] == pytest.approx(0.23, abs=0.01)
+    assert heads[2] == pytest.approx(1.52, abs=0.05)

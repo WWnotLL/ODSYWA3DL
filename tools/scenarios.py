@@ -20,7 +20,7 @@ from core.preprocess import (GroundTracker, PreprocessResult, check_proper_rotat
                              preprocess_frame, rotation_between)
 from tools.bag_reader import RawFrame, iter_frames
 from tools.positive_control import (BODY_HEIGHT_M, BODY_RADIUS_M, _overlaps,
-                                    inject_body, real_figure_track)
+                                    inject_body, inject_tilted_body, real_figure_track)
 
 
 class VerdictCounter:
@@ -69,6 +69,30 @@ def _placement(scenario: str, cfg: Config, axis, distance_m: float,
             base, args.body_radius, args.body_height)
 
 
+def _tilt(tilt_deg: float) -> np.ndarray:
+    angle = np.radians(tilt_deg)
+    return np.array([0.0, np.sin(angle), np.cos(angle)])
+
+
+def _inject(xyz: np.ndarray, sensor: np.ndarray, geometry, tilt_deg: float) -> tuple[np.ndarray, int]:
+    centre, z_bottom, radius, height = geometry
+    if tilt_deg == 0.0:
+        return inject_body(xyz, sensor, centre, z_bottom, radius, height)
+    return inject_tilted_body(xyz, sensor, (centre[0], centre[1], z_bottom), _tilt(tilt_deg),
+                              radius, height)
+
+
+def body_box(geometry, tilt_deg: float) -> tuple[np.ndarray, np.ndarray]:
+    centre, z_bottom, radius, height = geometry
+    direction = _tilt(tilt_deg)
+    top_y = centre[1] + height * direction[1]
+    spread = radius * abs(direction[1])
+    lo = np.array([centre[0] - radius, min(centre[1], top_y) - radius * direction[2], z_bottom - spread])
+    hi = np.array([centre[0] + radius, max(centre[1], top_y) + radius * direction[2],
+                   z_bottom + height * direction[2] + spread])
+    return lo, hi
+
+
 @dataclass(frozen=True, eq=False)
 class ScenarioFrame:
     frame: RawFrame
@@ -88,6 +112,16 @@ def scenario_range(cfg: Config, args) -> tuple[dict, int, int]:
             raise SystemExit("нет разметки оракула — сначала python -m tools.oracle")
         return figures, min(figures), max(figures)
     return {}, args.first_frame, args.last_frame
+
+
+def _extension_correction(xyz: np.ndarray, cfg: Config) -> tuple[float, float] | None:
+    from core.axis import _bed_centres, _rail_centres, extension_correction
+    rails, _ = _rail_centres(xyz, cfg.axis)
+    bed, _ = _bed_centres(xyz, cfg.axis)
+    if rails is None or bed is None:
+        return None
+    fix = extension_correction(rails, bed, cfg.axis)
+    return None if fix is None else (fix[0], fix[1])
 
 
 def iter_scenario_frames(cfg: Config, args, *, raw: bool) -> Iterator[ScenarioFrame]:
@@ -131,28 +165,34 @@ def iter_scenario_frames(cfg: Config, args, *, raw: bool) -> Iterator[ScenarioFr
                 if distance < cfg.detector.min_range_m:
                     continue
             geometry = _placement(args.scenario, cfg, clean_axis, distance, args)
-            centre, z_bottom, radius, height = geometry
+            if (args.placement_axis == "corrected" and clean_axis.x_joint_m is not None
+                    and clean_axis.far_method == "bed" and clean_axis.far_correction_slope is None
+                    and distance > clean_axis.x_joint_m):
+                fix = _extension_correction(result.xyz, cfg)
+                if fix is None:
+                    yield ScenarioFrame(frame, result, injected, 0, None, None, run_index)
+                    continue
+                (cx, cy), z_bottom, radius, height = geometry
+                geometry = ((cx, cy - (fix[0] * cx + fix[1])), z_bottom, radius, height)
+            centre = geometry[0]
             sensor = np.array([0.0, 0.0, float(result.plane.offset)])
             if not raw:
-                injected, n_points = inject_body(
-                    result.xyz, sensor, centre, z_bottom, radius, height)
+                injected, n_points = _inject(result.xyz, sensor, geometry, args.body_tilt_deg)
             else:
                 matrix = _to_leveled(result.plane, cfg)
                 leveled = frame.xyz @ matrix.T
                 leveled[:, 2] += float(result.plane.offset)
-                leveled, n_points = inject_body(
-                    leveled, sensor, centre, z_bottom, radius, height)
+                leveled, n_points = _inject(leveled, sensor, geometry, args.body_tilt_deg)
                 leveled[:, 2] -= float(result.plane.offset)
                 injected = leveled @ matrix
         yield ScenarioFrame(frame, result, injected, n_points, centre, geometry, run_index)
 
 
-def _dump_row(frame, run_index, centre, geometry, outcome) -> dict:
+def _dump_row(frame, run_index, centre, geometry, outcome, tilt_deg) -> dict:
     box = None
     if centre is not None:
-        _, z_bottom, radius, height = geometry
-        box = [[centre[0] - radius, centre[1] - radius, z_bottom],
-               [centre[0] + radius, centre[1] + radius, z_bottom + height]]
+        lo, hi = body_box(geometry, tilt_deg)
+        box = [lo.tolist(), hi.tolist()]
     debug = outcome.debug
     return {
         "frame": int(frame.index),
@@ -220,7 +260,8 @@ def run(cfg: Config, args) -> list[dict]:
 
             verdict.feed(state, bool(outcome.debug["candidates_raw"]["detections"]))
             if dump is not None:
-                dump.write(json.dumps(_dump_row(frame, run_index, centre, geometry, outcome),
+                dump.write(json.dumps(_dump_row(frame, run_index, centre, geometry, outcome,
+                                                args.body_tilt_deg),
                                       ensure_ascii=False) + "\n")
         else:
             body_axis = body_tracker.update(
@@ -236,9 +277,7 @@ def run(cfg: Config, args) -> list[dict]:
         if centre is None:
             continue
 
-        _, z_bottom, radius, height = geometry
-        lo = np.array([centre[0] - radius, centre[1] - radius, z_bottom])
-        hi = np.array([centre[0] + radius, centre[1] + radius, z_bottom + height])
+        lo, hi = body_box(geometry, args.body_tilt_deg)
         corridor = (None if outcome is None
                     else outcome.debug.get("corridor", {}).get("x_m"))
         row_trace = {}
@@ -363,6 +402,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="высота основания тела над путевым основанием, м; "
                              "по умолчанию уровень головки рельса (0.23 м), "
                              "0.0 = предмет лежит на основании между рельсами")
+    parser.add_argument("--body-tilt-deg", type=float, default=0.0,
+                        help="наклон тела от вертикали в поперечной плоскости, градусы; "
+                             "верх уходит влево (+y), низ стоит в точке размещения")
     parser.add_argument("--edge-penetration-m", type=float, default=0.05)
     parser.add_argument("--edge-height-m", type=float, default=1.0)
     parser.add_argument("--edge-radius-m", type=float, default=0.15)
@@ -386,6 +428,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="писать в строку сверку трассеров в кадре с телом "
                              "и в том же кадре без тела")
     parser.add_argument("--out", default="runs/scenarios")
+    parser.add_argument("--placement-axis", choices=["clean", "corrected"], default="clean",
+                        help="по какой оси ставить тело за стыком: сырая продлённая или "
+                             "с поправкой сдвига и наклона полосы относительно рельсов")
     parser.add_argument("--detector-config", default=None,
                         help="конфиг ядра, если он отличается от конфига размещения тела")
     parser.add_argument("--dump-results", default=None,

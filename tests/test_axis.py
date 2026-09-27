@@ -397,3 +397,23 @@ def test_sigma_does_not_punish_the_rails_segment_for_the_bed_error(cfg: Config) 
                           far_slope=0.0, far_y0_m=0.0, far_method="bed", **common)
     assert float(broken.sigma_edge(20.0, prior)) > near * 3
 
+
+
+def test_extension_correction_recovers_shift_and_slope_of_the_bed(cfg: Config) -> None:
+    from core.axis import extension_correction
+    x = np.arange(6.25, 25.0, 2.5)
+    rails = np.column_stack([x, 0.01 * x])
+    bx = np.arange(6.25, 50.0, 2.5)
+    bed = np.column_stack([bx, 0.01 * bx - 0.05 - 0.004 * bx])
+    slope, shift, lo, hi = extension_correction(rails, bed, cfg.axis)
+    assert slope == pytest.approx(-0.004, abs=1e-9)
+    assert shift == pytest.approx(-0.05, abs=1e-9)
+    assert (lo, hi) == (6.25, x[-1])
+
+
+def test_extended_axis_carries_its_correction(cfg: Config) -> None:
+    axis = estimate_axis(track_rep103(yaw_deg=-1.6, y0=0.1), cfg.axis)
+    if axis is None or axis.x_joint_m is None:
+        pytest.skip("синтетическая сцена не продлевает базу")
+    assert axis.far_correction_slope is not None
+    assert axis.to_debug()["far_correction"] is not None

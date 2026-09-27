@@ -36,6 +36,8 @@ class AxisEstimate:
     far_slope: float | None = None
     far_y0_m: float | None = None
     far_method: str | None = None
+    far_correction_slope: float | None = None
+    far_correction_shift_m: float | None = None
     hold_path_m: float = 0.0
     clearance_m: float = 0.113
 
@@ -114,6 +116,9 @@ class AxisEstimate:
 
             "x_joint_m": None if self.x_joint_m is None else round(self.x_joint_m, 2),
             "far_method": self.far_method,
+            "far_correction": (None if self.far_correction_slope is None else {
+                "slope": round(self.far_correction_slope, 6),
+                "shift_m": round(self.far_correction_shift_m, 4)}),
             "x_traced_m": [round(self.x_start_m, 2), round(self.x_traced_m, 2)],
             "x_trusted_m": round(self.x_end_m, 2),
             "n_slices": self.n_slices,
@@ -185,6 +190,25 @@ def _rail_centres(xyz: np.ndarray, cfg: AxisConfig) -> tuple[np.ndarray | None, 
     if len(rows) >= cfg.min_slices:
         return np.asarray(rows), "ok"
     return None, "too_few_slices"
+
+
+def rail_head_lines(xyz: np.ndarray, estimate: AxisEstimate, cfg: AxisConfig) -> np.ndarray:
+    end = estimate.x_joint_m if estimate.x_joint_m is not None else estimate.x_end_m
+    starts = _slice_bounds(cfg)
+    starts = starts[(starts + cfg.slice_m > estimate.x_start_m) & (starts < end)]
+    rows = np.full((starts.size, 4), np.nan)
+    rows[:, 0], rows[:, 1] = starts, np.minimum(starts + cfg.slice_m, end)
+    head = xyz[(xyz[:, 2] > cfg.rails_z_min_m) & (xyz[:, 2] < cfg.rails_z_max_m)]
+    across = estimate.offset(head)
+    half, window = cfg.rails_half_gauge_m, cfg.rails_search_halfwidth_m
+    for i, start in enumerate(starts):
+        lateral = across[(head[:, 0] >= start) & (head[:, 0] < rows[i, 1])]
+        left = _ridge(lateral, -half - window, -half + window, cfg)
+        right = _ridge(lateral, half - window, half + window, cfg)
+        if left is None or right is None or not cfg.rails_gauge_min_m < right - left < cfg.rails_gauge_max_m:
+            continue
+        rows[i, 2], rows[i, 3] = left, right
+    return rows
 
 
 def _bed_centres(xyz: np.ndarray, cfg: AxisConfig) -> tuple[np.ndarray | None, str]:
@@ -275,6 +299,18 @@ def _extend_base(kept: np.ndarray, slope: float, y0: float,
     return best
 
 
+def extension_correction(near: np.ndarray, far: np.ndarray, cfg: AxisConfig
+                         ) -> tuple[float, float, float, float] | None:
+    near_idx = np.floor((near[:, 0] - cfg.x_min_m) / cfg.slice_m).astype(int)
+    far_idx = np.floor((far[:, 0] - cfg.x_min_m) / cfg.slice_m).astype(int)
+    common, ni, fi = np.intersect1d(near_idx, far_idx, return_indices=True)
+    if common.size < cfg.min_slices:
+        return None
+    x = near[ni, 0]
+    slope, shift = np.polyfit(x, far[fi, 1] - near[ni, 1], 1)
+    return float(slope), float(shift), float(x.min()), float(x.max())
+
+
 def _cross_check_reason(method: str, tables: dict, reasons: dict,
                         cross: float | None, cfg: AxisConfig) -> str:
     if cross is not None:
@@ -313,13 +349,20 @@ def estimate_axis(xyz: np.ndarray, cfg: AxisConfig) -> AxisEstimate | None:
 
         x_end = float(kept[-1, 0])
         joint = far_slope = far_y0 = far_method = None
+        fix_slope = fix_shift = None
         if cfg.extend_base and others:
             extension = _extend_base(kept, slope, y0, others, cfg)
+            fix = None
+            if extension is not None and cfg.correct_extension:
+                fix = extension_correction(table, others[extension[0]], cfg)
+                if fix is None:
+                    extension = None
             if extension is not None:
                 far_method, far_slope, far_y0, x_end, gap = extension
                 joint = float(kept[-1, 0])
-
-
+                if fix is not None:
+                    fix_slope, fix_shift = fix[0], fix[1]
+                    far_slope, far_y0 = far_slope - fix_slope, far_y0 - fix_shift
                 cross = gap if cross is None else max(cross, gap)
                 reason = "ok"
         return AxisEstimate(
@@ -343,6 +386,8 @@ def estimate_axis(xyz: np.ndarray, cfg: AxisConfig) -> AxisEstimate | None:
             far_slope=far_slope,
             far_y0_m=far_y0,
             far_method=far_method,
+            far_correction_slope=fix_slope,
+            far_correction_shift_m=fix_shift,
         )
     return None
 

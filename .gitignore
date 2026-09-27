@@ -30,3 +30,11 @@ out/
 # Локальные рабочие файлы
 HANDOFF.md
 ALGORITHM.md
+
+# Запись организаторов с синтетикой (7 ГиБ) и её архив
+cloud_with_fake_obj/
+cloud_with_fake_obj*.zst
+
+# Документы — локальные; в репозиторий идёт только README.md
+*.md
+!README.md
