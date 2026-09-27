@@ -184,6 +184,7 @@
 
 ## Результаты экспериментов
 *Полное описание результатов приведено в файле ___[docs/EXPERIMENTS.md](https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar/blob/main/docs/EXPERIMENTS.md)___.*<br>
+<br>
 Все замеры выполнены на стенде, соответствующем требованиям ТЗ: **Intel Core i7-9700E, 8 ядер, 2.60 GHz**, при явном ограничении потоков BLAS (`OMP_NUM_THREADS=8`, `OPENBLAS_NUM_THREADS=8`). Без этого ограничения время обработки может вырасти в 2–3 раза.
 
 ### ⏱ Производительность (скорость работы)
