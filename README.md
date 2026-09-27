@@ -4,7 +4,7 @@
 
 ## Установка
 
-Python 3.12.
+Python 3.12 (3.10).
 
 ```bash
 pip install -r requirements-core.txt    # только ядро: numpy, PyYAML, scipy
