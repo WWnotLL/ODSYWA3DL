@@ -121,6 +121,8 @@ class AxesConfig:
 class DualReturnConfig:
     keep: str
     secondary_min_delta_m: float
+    direction_digits: int
+    direction_tolerance: float
 
 
 @dataclass(frozen=True)
@@ -152,6 +154,27 @@ class GroundConfig:
     history_length: int
 
 
+@dataclass(frozen=True)
+class PlaneGuardConfig:
+    refit_limits_enabled: bool
+    refit_min_inliers: int
+    plausibility_enabled: bool
+    max_tilt_from_base_deg: float
+    max_tilt_step_deg: float
+    max_offset_step_m: float
+    hold_enabled: bool
+    rail_check_enabled: bool
+    rail_x_min_m: float
+    rail_x_max_m: float
+    rail_head_percentile: float
+    rail_head_min_m: float
+    rail_head_max_m: float
+
+    @property
+    def active(self) -> bool:
+        return self.refit_limits_enabled or self.plausibility_enabled or self.rail_check_enabled
+
+
 @dataclass(frozen=True, eq=False)
 class PreprocessConfig:
     min_range_m: float
@@ -159,11 +182,13 @@ class PreprocessConfig:
     axes: AxesConfig
     numerics: NumericsConfig
     ground: GroundConfig
+    plane_guard: PlaneGuardConfig
 
 
 @dataclass(frozen=True)
 class GaugeConfig:
     half_width_m: float
+    height_reference: str
     z_min_m: float
     z_max_m: float
     y_center_offset_m: float | None
@@ -179,6 +204,11 @@ class GaugeConfig:
     rail_mask_half_gauge_m: float
     rail_mask_half_width_m: float
     rail_mask_height_max_m: float
+    rail_mask_follow_heads: bool
+    rail_mask_found_half_width_m: float
+    train_enabled: bool
+    train_half_width_m: float
+    train_top_m: float
     platform_slice_m: float
     platform_min_points_per_slice: int
     platform_continuous_m: float
@@ -214,6 +244,10 @@ class GaugeConfig:
             (np.abs(magnitude - self.rail_mask_half_gauge_m) <= self.rail_mask_half_width_m)
             & (np.asarray(height_above_railhead, dtype=float) <= self.rail_mask_height_max_m)
         )
+
+    def train_depth(self, lateral: np.ndarray, height_above_railhead: np.ndarray) -> np.ndarray:
+        return np.minimum(self.train_half_width_m - np.abs(np.asarray(lateral, dtype=float)),
+                          self.train_top_m - np.asarray(height_above_railhead, dtype=float))
 
     def in_platform_zone(self, lateral: np.ndarray,
                          height_above_railhead: np.ndarray) -> np.ndarray:
@@ -261,6 +295,7 @@ class AxisConfig:
     cross_check: bool
     cross_check_prior_deg: float
     extend_base: bool
+    correct_extension: bool
     hold_curvature_radius_m: float
     gate_m: float
     anchor_window_frames: int
@@ -286,12 +321,16 @@ class DetectorConfig:
     min_points_reference_m: float
     min_points_floor: float
     confidence_sigma: float
+    depth_rank: int
+    min_depth_m: float | None
+    floor_above_rail_head_m: float | None
     cross_check_prior_deg: float
 
 
 @dataclass(frozen=True)
 class VerdictConfig:
     memory_frames: int
+    latch_through_unchecked: bool
 
 
 @dataclass(frozen=True)
@@ -410,8 +449,14 @@ class Config:
         dual = DualReturnConfig(
             keep=dual_s.choice("keep", frozenset({"nearest", "farthest"})),
             secondary_min_delta_m=dual_s.num("secondary_min_delta_m"),
+            direction_digits=dual_s.integer("direction_digits"),
+            direction_tolerance=dual_s.num("direction_tolerance"),
         )
         dual_s.close()
+        if dual.direction_digits < 1:
+            raise ConfigError("preprocess.dual_return.direction_digits должен быть не меньше 1")
+        if dual.direction_tolerance <= 0.0:
+            raise ConfigError("preprocess.dual_return.direction_tolerance должен быть положительным")
 
         axes_s = pre_s.section("axes")
         axes = AxesConfig(rotation=axes_s.matrix3("rotation"))
@@ -457,29 +502,72 @@ class Config:
         if ground.zone_min_m >= ground.zone_max_m:
             raise ConfigError("preprocess.ground: zone_min_m должен быть меньше zone_max_m")
 
+        guard_s = pre_s.section("plane_guard")
+        refit_s = guard_s.section("refit_limits")
+        plaus_s = guard_s.section("plausibility")
+        hold_s = guard_s.section("hold")
+        rail_s = guard_s.section("rail_check")
+        plane_guard = PlaneGuardConfig(
+            refit_limits_enabled=refit_s.flag("enabled"),
+            refit_min_inliers=refit_s.integer("min_inliers"),
+            plausibility_enabled=plaus_s.flag("enabled"),
+            max_tilt_from_base_deg=plaus_s.num("max_tilt_from_base_deg"),
+            max_tilt_step_deg=plaus_s.num("max_tilt_step_deg"),
+            max_offset_step_m=plaus_s.num("max_offset_step_m"),
+            hold_enabled=hold_s.flag("enabled"),
+            rail_check_enabled=rail_s.flag("enabled"),
+            rail_x_min_m=rail_s.num("x_min_m"),
+            rail_x_max_m=rail_s.num("x_max_m"),
+            rail_head_percentile=rail_s.num("head_percentile"),
+            rail_head_min_m=rail_s.num("head_min_m"),
+            rail_head_max_m=rail_s.num("head_max_m"),
+        )
+        for section in (refit_s, plaus_s, hold_s, rail_s, guard_s):
+            section.close()
+        if plane_guard.refit_min_inliers < 3:
+            raise ConfigError("preprocess.plane_guard.refit_limits.min_inliers должен быть не меньше 3")
+        if min(plane_guard.max_tilt_from_base_deg, plane_guard.max_tilt_step_deg,
+               plane_guard.max_offset_step_m) <= 0.0:
+            raise ConfigError("preprocess.plane_guard.plausibility: пороги должны быть положительными")
+        if not plane_guard.rail_x_min_m < plane_guard.rail_x_max_m:
+            raise ConfigError("preprocess.plane_guard.rail_check: x_min_m должен быть меньше x_max_m")
+        if not plane_guard.rail_head_min_m < plane_guard.rail_head_max_m:
+            raise ConfigError("preprocess.plane_guard.rail_check: head_min_m должен быть меньше head_max_m")
+        if not 0.0 < plane_guard.rail_head_percentile <= 100.0:
+            raise ConfigError("preprocess.plane_guard.rail_check: head_percentile вне (0, 100]")
+
         preprocess = PreprocessConfig(
             min_range_m=pre_s.num("min_range_m"),
             dual_return=dual,
             axes=axes,
             numerics=numerics,
             ground=ground,
+            plane_guard=plane_guard,
         )
         pre_s.close()
 
         gauge_s = root.section("gauge")
         profile = gauge_s.pairs("profile_mm") / 1000.0
+        height_reference = gauge_s.choice("height_reference", frozenset({"rail_head", "base"}))
+        rail_head_offset = gauge_s.opt_num("rail_head_offset_m")
+        lift = (rail_head_offset or 0.0) if height_reference == "base" else 0.0
+        profile[:, 1] -= lift
         rail_s = gauge_s.section("contact_rail_exclusion_mm")
         plat_s = gauge_s.section("platform_exclusion_mm")
         mask_s = gauge_s.section("rail_mask_mm")
         eva_s = gauge_s.section("platform_evidence")
+        train_s = gauge_s.section("train")
+        train_lift = ((rail_head_offset or 0.0)
+                      if train_s.choice("height_reference", frozenset({"rail_head", "base"})) == "base" else 0.0)
         gauge = GaugeConfig(
             half_width_m=gauge_s.num("half_width_m"),
+            height_reference=height_reference,
 
 
             z_min_m=float(profile[:, 1].min()),
-            z_max_m=gauge_s.num("z_max_m"),
+            z_max_m=gauge_s.num("z_max_m") - lift,
             y_center_offset_m=gauge_s.opt_num("y_center_offset_m"),
-            rail_head_offset_m=gauge_s.opt_num("rail_head_offset_m"),
+            rail_head_offset_m=rail_head_offset,
             axis_slope=gauge_s.opt_num("axis_slope"),
             profile_half_width_m=profile[:, 0],
             profile_height_m=profile[:, 1],
@@ -494,6 +582,11 @@ class Config:
             rail_mask_half_gauge_m=mask_s.num("half_gauge") / 1000.0,
             rail_mask_half_width_m=mask_s.num("half_width") / 1000.0,
             rail_mask_height_max_m=mask_s.num("height_max") / 1000.0,
+            rail_mask_follow_heads=mask_s.flag("follow_heads"),
+            rail_mask_found_half_width_m=mask_s.num("found_half_width") / 1000.0,
+            train_enabled=train_s.flag("enabled"),
+            train_half_width_m=train_s.num("half_width_m"),
+            train_top_m=train_s.num("height_m") - train_lift,
             platform_slice_m=eva_s.num("slice_m"),
             platform_min_points_per_slice=eva_s.integer("min_points_per_slice"),
             platform_continuous_m=eva_s.num("continuous_m"),
@@ -503,6 +596,7 @@ class Config:
             platform_min_points_above_top=eva_s.integer("min_points_above_top"),
         )
         eva_s.close()
+        train_s.close()
         rail_s.close()
         gauge_s.close()
         if np.any(np.diff(gauge.profile_height_m) < 0.0):
@@ -589,6 +683,7 @@ class Config:
             cross_check=axis_s.flag("cross_check"),
             cross_check_prior_deg=axis_s.num("cross_check_prior_deg"),
             extend_base=axis_s.flag("extend_base"),
+            correct_extension=axis_s.flag("correct_extension"),
             hold_curvature_radius_m=hist_s.num("hold_curvature_radius_m"),
             gate_m=hist_s.num("gate_m"),
             anchor_window_frames=hist_s.integer("anchor_window_frames"),
@@ -615,9 +710,24 @@ class Config:
             min_points_reference_m=det_s.num("min_points_reference_m"),
             min_points_floor=det_s.num("min_points_floor"),
             confidence_sigma=det_s.num("confidence_sigma"),
+            depth_rank=det_s.integer("depth_rank"),
+            min_depth_m=det_s.opt_num("min_depth_m"),
+            floor_above_rail_head_m=det_s.opt_num("floor_above_rail_head_m"),
             cross_check_prior_deg=axis.cross_check_prior_deg,
         )
         det_s.close()
+        if detector.depth_rank < 1 or detector.depth_rank > detector.cluster_min_points:
+            raise ConfigError("detector.depth_rank должен быть от 1 до cluster_min_points")
+        if detector.min_depth_m is not None and detector.min_depth_m < 0.0:
+            raise ConfigError("detector.min_depth_m не может быть отрицательным")
+        if gauge.train_enabled and (detector.min_depth_m is None or gauge.rail_head_offset_m is None):
+            raise ConfigError("gauge.train включается только вместе с detector.min_depth_m (≥ 0) и gauge.rail_head_offset_m")
+        if gauge.train_half_width_m <= 0.0 or gauge.train_top_m <= 0.0:
+            raise ConfigError("gauge.train: half_width_m и высота над УГР должны быть положительными")
+        if gauge.rail_mask_found_half_width_m <= 0.0:
+            raise ConfigError("gauge.rail_mask_mm.found_half_width должна быть положительной")
+        if detector.floor_above_rail_head_m is not None and gauge.rail_head_offset_m is None:
+            raise ConfigError("detector.floor_above_rail_head_m задаётся только вместе с gauge.rail_head_offset_m")
         if detector.use_intensity:
             raise ConfigError(
                 "detector.use_intensity: ядро детекции не должно использовать интенсивность — "
@@ -636,7 +746,8 @@ class Config:
             gate_vertical_m=conf_s.num("gate_vertical_m"),
             unknown_advance_extra_m=conf_s.num("unknown_advance_extra_m"),
             max_missed_frames=conf_s.integer("max_missed_frames"),
-            verdict=VerdictConfig(memory_frames=verdict_s.integer("memory_frames")),
+            verdict=VerdictConfig(memory_frames=verdict_s.integer("memory_frames"),
+                                  latch_through_unchecked=verdict_s.flag("latch_through_unchecked")),
         )
         verdict_s.close(); conf_s.close()
         if not 1 <= confirm.required_frames <= confirm.window_frames:
@@ -657,6 +768,11 @@ class Config:
         fc_s.close()
 
         root.close()
+        guard = preprocess.plane_guard
+        if guard.plausibility_enabled and not (guard.hold_enabled and confirm.verdict.latch_through_unchecked):
+            raise ConfigError(
+                "preprocess.plane_guard.plausibility включается только вместе с plane_guard.hold "
+                "и confirm.verdict.latch_through_unchecked: без них отказ плоскости снимает стоп")
         return cls(
             preprocess=preprocess,
             gauge=gauge,

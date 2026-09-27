@@ -23,6 +23,8 @@ preprocess:
   dual_return:
     keep: "nearest"
     secondary_min_delta_m: 0.01
+    direction_digits: 5
+    direction_tolerance: 1.0e-6
   axes:
     rotation:
       - [0.0, -1.0, 0.0]
@@ -58,8 +60,27 @@ preprocess:
     consistency_halfwidth_m: 0.30
     consistency_max_tilt_deg: 3.0
     history_length: 21
+  plane_guard:
+    refit_limits:
+      enabled: true
+      min_inliers: 1900
+    plausibility:
+      enabled: true
+      max_tilt_from_base_deg: 4.3
+      max_tilt_step_deg: 1.7
+      max_offset_step_m: 0.19
+    hold:
+      enabled: true
+    rail_check:
+      enabled: true
+      x_min_m: 5.0
+      x_max_m: 15.0
+      head_percentile: 90.0
+      head_min_m: 0.090
+      head_max_m: 0.341
 gauge:
   half_width_m: 1.60
+  height_reference: "rail_head"
   z_max_m: 3.90
   rail_head_offset_m: 0.230
   y_center_offset_m: null
@@ -77,9 +98,16 @@ gauge:
     half_width_max: 1650
     height_max: 500
   rail_mask_mm:
-    half_gauge: 760
-    half_width: 60
-    height_max: 90
+    half_gauge: 800
+    half_width: 120
+    height_max: 60
+    follow_heads: false
+    found_half_width: 113
+  train:
+    enabled: true
+    half_width_m: 1.05
+    height_m: 3.00
+    height_reference: "base"
   platform_exclusion_mm:
     lateral_from: 1450
     lateral_tolerance: 45
@@ -95,6 +123,7 @@ gauge:
 axis:
   methods: ["rails", "bed"]
   extend_base: true
+  correct_extension: false
   slice_m: 2.5
   x_min_m: 5.0
   x_max_m: 60.0
@@ -142,10 +171,13 @@ detector:
   cluster_eps_base_m: 0.30
   cluster_eps_per_m: 0.012
   cluster_min_points: 4
-  min_points_at_reference: 60.0
+  min_points_at_reference: 30.0
   min_points_reference_m: 10.0
   min_points_floor: 5.0
   confidence_sigma: 2.0
+  depth_rank: 4
+  min_depth_m: 0.0
+  floor_above_rail_head_m: 0.020
 confirm:
   enabled: true
   window_frames: 5
@@ -158,6 +190,7 @@ confirm:
   max_missed_frames: 2
   verdict:
     memory_frames: 10
+    latch_through_unchecked: true
 odometry:
   x_min_m: 5.0
   x_max_m: 60.0

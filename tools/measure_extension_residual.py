@@ -9,7 +9,10 @@ from pathlib import Path
 
 import numpy as np
 
-from core.axis import AxisTracker, _bed_centres, _rail_centres, _trim_to_clearance
+from types import SimpleNamespace
+
+from core.axis import (AxisTracker, _bed_centres, _rail_centres, _trim_to_clearance,
+                       extension_correction)
 from core.config import Config
 from core.odometry import estimate_shift, longitudinal_profile
 from core.preprocess import GroundTracker, preprocess_frame
@@ -30,15 +33,15 @@ def _faces(values: np.ndarray) -> tuple[float, float] | None:
 
 def _correction(rails: np.ndarray, bed: np.ndarray, x_min: float, slice_m: float,
                 min_slices: int) -> tuple[float, float, float, float] | None:
-    r_idx = np.floor((rails[:, 0] - x_min) / slice_m).astype(int)
-    b_idx = np.floor((bed[:, 0] - x_min) / slice_m).astype(int)
-    common, ri, bi = np.intersect1d(r_idx, b_idx, return_indices=True)
-    if common.size < min_slices:
-        return None
-    x = rails[ri, 0]
-    diff = bed[bi, 1] - rails[ri, 1]
-    slope, shift = np.polyfit(x, diff, 1)
-    return float(slope), float(shift), float(x.min()), float(x.max())
+    cfg = SimpleNamespace(x_min_m=x_min, slice_m=slice_m, min_slices=min_slices)
+    return extension_correction(rails, bed, cfg)
+
+
+def _raw_far(axis) -> tuple[float, float]:
+    if axis.far_correction_slope is None:
+        return axis.far_slope, axis.far_y0_m
+    return (axis.far_slope + axis.far_correction_slope,
+            axis.far_y0_m + axis.far_correction_shift_m)
 
 
 def run(cfg: Config, record: str, lateral: tuple[float, float], height: tuple[float, float],
@@ -106,7 +109,8 @@ def run(cfg: Config, record: str, lateral: tuple[float, float], height: tuple[fl
         for start in np.arange(lo, min(far[1], axis.x_end_m) - SLICE_M + 1e-6, SLICE_M):
             in_slice = in_height & (xyz[:, 0] >= start) & (xyz[:, 0] < start + SLICE_M)
             x, y = xyz[in_slice, 0], xyz[in_slice, 1]
-            raw_axis = axis.far_slope * x + axis.far_y0_m
+            raw_slope, raw_y0 = _raw_far(axis)
+            raw_axis = raw_slope * x + raw_y0
             fixed_axis = raw_axis - (c_slope * x + c_shift)
 
 

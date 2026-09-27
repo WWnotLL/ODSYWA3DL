@@ -11,9 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from core.config import Config
-
-
-EPISODE_GAP_S = 1.0
+from tools.episode_table import EPISODE_GAP_S, group_by_gap
 
 
 STANDING_PATH_M = 1.0
@@ -38,11 +36,7 @@ def shape_of(detection: dict, elongation: float) -> str:
 
 
 def count_episodes(stamps_ns: list[int], gap_s: float = EPISODE_GAP_S) -> int:
-    if not stamps_ns:
-        return 0
-    ordered = sorted(stamps_ns)
-    breaks = sum(1 for a, b in zip(ordered, ordered[1:]) if (b - a) / 1e9 > gap_s)
-    return breaks + 1
+    return len(group_by_gap([{"stamp_ns": s} for s in stamps_ns], gap_s))
 
 
 def travelled_path(speed_csv: Path) -> tuple[float | None, float]:

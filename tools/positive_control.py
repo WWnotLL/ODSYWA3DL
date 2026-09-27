@@ -62,6 +62,47 @@ def inject_body(
     return out, int(hit.sum())
 
 
+def inject_tilted_body(
+    xyz: np.ndarray,
+    sensor_origin: np.ndarray,
+    bottom_xyz: tuple[float, float, float],
+    direction: np.ndarray,
+    radius_m: float,
+    length_m: float,
+) -> tuple[np.ndarray, int]:
+    ray = xyz - sensor_origin
+    length = np.linalg.norm(ray, axis=1)
+    alive = length > 1e-6
+    unit = np.zeros_like(ray)
+    unit[alive] = ray[alive] / length[alive, None]
+
+    along = np.asarray(direction, dtype=float) / np.linalg.norm(direction)
+    start = sensor_origin - np.asarray(bottom_xyz, dtype=float)
+    unit_along = unit @ along
+    unit_across = unit - unit_along[:, None] * along
+    start_across = start - float(start @ along) * along
+    a = (unit_across ** 2).sum(axis=1)
+    b = 2.0 * (unit_across @ start_across)
+    c = float(start_across @ start_across) - radius_m * radius_m
+    disc = b * b - 4.0 * a * c
+    hit = alive & (disc > 0.0) & (a > 1e-12)
+
+    root = np.sqrt(np.where(hit, disc, 0.0))
+    denom = np.where(hit, 2.0 * a, 1.0)
+    near = np.where(hit, (-b - root) / denom, np.inf)
+    far = np.where(hit, (-b + root) / denom, np.inf)
+    t_hit = np.where(near > 0.0, near, far)
+
+    position = float(start @ along) + unit_along * np.where(np.isfinite(t_hit), t_hit, 0.0)
+    hit &= np.isfinite(t_hit) & (t_hit > 0.0)
+    hit &= (position >= 0.0) & (position <= length_m)
+    hit &= t_hit < length
+
+    out = xyz.copy()
+    out[hit] = sensor_origin + unit[hit] * t_hit[hit, None]
+    return out, int(hit.sum())
+
+
 def _overlaps(detections: list, lo: np.ndarray, hi: np.ndarray, tolerance: float) -> bool:
     for d in detections:
         d_lo = np.asarray(d.bbox_min_xyz) - tolerance

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 from scipy.spatial import cKDTree
 
@@ -14,7 +16,7 @@ from tests.synthetic import box_rep103, track_rep103
 LIDAR_HEIGHT_M = 1.31
 
 
-def _frames(cfg: Config, n: int, with_body: bool) -> list[tuple]:
+def _frames(cfg: Config, n: int, with_body: bool, body: tuple | None = None) -> list[tuple]:
     rotation = cfg.preprocess.axes.rotation
     out = []
     for i in range(n):
@@ -23,6 +25,8 @@ def _frames(cfg: Config, n: int, with_body: bool) -> list[tuple]:
         if with_body:
             centre = (20.0, float(np.interp(20.0, [0.0, 60.0], [0.0, -1.68])), 1.0)
             cloud = np.concatenate([track, box_rep103(centre)])
+        if body is not None:
+            cloud = np.concatenate([cloud, box_rep103(*body)])
         cloud = cloud - np.array([0.0, 0.0, LIDAR_HEIGHT_M])
         raw = cloud @ rotation
 
@@ -195,3 +199,126 @@ def test_missing_axis_carries_its_reason(cfg: Config) -> None:
     assert axis["reason"] in {"tracer_failed", "anchor_uninitialised"}
     assert outcome.debug["checked"] is True
 
+
+
+def _edge_body(cfg: Config, inside_m: float) -> tuple:
+    x, z, width = 20.0, 1.0, 0.10
+    y_axis = float(np.interp(x, [0.0, 60.0], [0.0, -1.68]))
+    edge = float(cfg.gauge.half_width_at(np.array([z - cfg.gauge.rail_head_offset_m]))[0])
+    return (x, y_axis + edge - inside_m + 0.5 * width, z), (0.5, width, 0.2)
+
+
+DEPTH_THRESHOLD_M = 0.045
+
+
+def _with_depth_threshold(cfg: Config) -> Config:
+    return dataclasses.replace(
+        cfg, gauge=dataclasses.replace(cfg.gauge, train_enabled=False),
+        detector=dataclasses.replace(cfg.detector, min_depth_m=DEPTH_THRESHOLD_M))
+
+
+def test_a_shallow_candidate_stays_in_debug_but_never_alarms(cfg: Config) -> None:
+    cfg = _with_depth_threshold(cfg)
+    frames = _frames(cfg, 6, with_body=False, body=_edge_body(cfg, 0.02))
+    for confirm in (True, False):
+        rows = _run(ObstacleDetector(cfg, confirm=confirm), frames)
+        assert not any(r["obstacle_found"] for r in rows)
+        raw = rows[-1]["debug"]["candidates_raw"]
+        assert raw["detections"], "тело у кромки должно остаться кандидатом"
+        assert 0.0 < max(raw["depth_m"]) < cfg.detector.min_depth_m
+        assert raw["min_depth_m"] == cfg.detector.min_depth_m
+
+
+def test_a_candidate_deeper_than_the_threshold_still_alarms(cfg: Config) -> None:
+    cfg = _with_depth_threshold(cfg)
+    frames = _frames(cfg, 6, with_body=False, body=_edge_body(cfg, 0.12))
+    rows = _run(ObstacleDetector(cfg, confirm=True), frames)
+    assert rows[-1]["obstacle_found"]
+    assert rows[-1]["debug"]["depth_m"][0] >= cfg.detector.min_depth_m
+
+
+def test_the_default_config_uses_the_train_gauge_rule(cfg: Config) -> None:
+    assert cfg.gauge.train_enabled is True
+    assert cfg.detector.min_depth_m == 0.0
+    assert cfg.detector.min_points_at_reference == 30.0
+    assert cfg.detector.floor_above_rail_head_m == 0.02
+    assert cfg.gauge.rail_mask_follow_heads is False
+    assert cfg.axis.correct_extension is False
+
+
+def test_a_shallow_candidate_alarms_with_the_threshold_off(cfg: Config) -> None:
+    off = dataclasses.replace(cfg, detector=dataclasses.replace(cfg.detector, min_depth_m=None))
+    frames = _frames(off, 6, with_body=False, body=_edge_body(off, 0.02))
+    rows = _run(ObstacleDetector(off, confirm=True), frames)
+    assert rows[-1]["obstacle_found"]
+    assert rows[-1]["debug"]["candidates_raw"]["min_depth_m"] is None
+
+
+def test_frames_without_ring_and_time_are_checked_and_give_the_same_result(cfg: Config) -> None:
+    frames = []
+    for cloud, intensity, _, _, stamp in _frames(cfg, 6, with_body=True):
+        unit = np.round(cloud / np.linalg.norm(cloud, axis=1)[:, None], 4)
+        first = np.sort(np.unique(unit, axis=0, return_index=True)[1])
+        index = np.arange(first.size)
+        ring = (index // 128).astype(np.uint16)
+        t_rel = (index % 128).astype(np.float64) * 1.0e-5
+        frames.append((cloud[first], intensity[first], ring, t_rel, stamp))
+    bare = [(cloud, intensity, None, None, stamp) for cloud, intensity, _, _, stamp in frames]
+    full_rows, bare_rows = _run(ObstacleDetector(cfg), frames), _run(ObstacleDetector(cfg), bare)
+    assert all(r["debug"]["checked"] for r in bare_rows)
+    assert bare_rows[-1]["obstacle_found"]
+    full_pairing = [r["debug"].pop("dual_return") for r in full_rows]
+    bare_pairing = [r["debug"].pop("dual_return") for r in bare_rows]
+    assert {d["pairing"] for d in full_pairing} == {"shot"}
+    assert {d["pairing"] for d in bare_pairing} == {"direction"}
+    assert [d["n_unpaired"] for d in full_pairing] == [d["n_unpaired"] for d in bare_pairing]
+    assert full_rows == bare_rows
+
+
+def _with_latch(cfg: Config, on: bool) -> Config:
+    confirm = dataclasses.replace(
+        cfg.confirm, verdict=dataclasses.replace(cfg.confirm.verdict, latch_through_unchecked=on))
+    return dataclasses.replace(cfg, confirm=confirm)
+
+
+def test_a_stop_is_latched_through_an_unchecked_frame(cfg: Config) -> None:
+    detector = ObstacleDetector(_with_latch(cfg, True))
+    detector.verdict._stopped = True
+    empty = np.zeros((10, 3), dtype=np.float32)
+    row = detector.process(empty, np.zeros(10, np.float32), None, None, 1).to_dict()
+    assert row["debug"]["checked"] is False
+    assert row["debug"]["verdict"]["stop"] is True
+    assert row["debug"]["verdict"]["reason"] == "latched_through_unchecked"
+
+
+def test_without_the_latch_an_unchecked_frame_has_no_verdict(cfg: Config) -> None:
+    detector = ObstacleDetector(_with_latch(cfg, False))
+    detector.verdict._stopped = True
+    empty = np.zeros((10, 3), dtype=np.float32)
+    row = detector.process(empty, np.zeros(10, np.float32), None, None, 1).to_dict()
+    assert "verdict" not in row["debug"]
+
+
+def _guarded(cfg: Config) -> Config:
+    guard = dataclasses.replace(cfg.preprocess.plane_guard, refit_limits_enabled=True,
+                                plausibility_enabled=True, hold_enabled=True, rail_check_enabled=True)
+    return _with_latch(dataclasses.replace(
+        cfg, preprocess=dataclasses.replace(cfg.preprocess, plane_guard=guard)), True)
+
+
+def test_an_exhausted_hold_gives_an_unchecked_frame_with_the_stop_latched(cfg: Config) -> None:
+    guarded = _guarded(cfg)
+    detector = ObstacleDetector(guarded)
+    for cloud, intensity, ring, t_rel, stamp in _frames(guarded, guarded.preprocess.ground.history_length, with_body=False):
+        detector.process(cloud, intensity, ring, t_rel, stamp)
+    ground = detector._ground
+    ground._holding, ground._hold_unknown_frames = True, guarded.axis.max_staleness_frames + 1
+    detector.verdict._stopped = True
+    raised = track_rep103(yaw_deg=-1.6) + np.array([0.0, 0.0, 0.5 - LIDAR_HEIGHT_M])
+    raw = (raised @ guarded.preprocess.axes.rotation).astype(np.float32)
+    n = raw.shape[0]
+    row = detector.process(raw, np.zeros(n, np.float32), None, None, int(1e10)).to_dict()
+    assert row["debug"]["checked"] is False
+    assert "плоскость основания отвергнута" in row["debug"]["detail"]
+    assert row["debug"]["verdict"]["stop"] is True
+    assert row["debug"]["plane_guard"]["hold_expired"] is True

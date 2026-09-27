@@ -201,6 +201,10 @@ class AxisLossVerdict:
         self._stopped = False
         self._since_measured: list[bool] = []
 
+    @property
+    def stopped(self) -> bool:
+        return self._stopped
+
     def update(self, result: FrameResult, *, had_candidate: bool | None = None) -> dict:
         state = _state_of(result)
         if had_candidate is None:
