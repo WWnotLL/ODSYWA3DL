@@ -22,6 +22,9 @@ def detector_nodes(context):
         return LaunchConfiguration(name).perform(context)
 
     qx, qy, qz, qw = lidar_rotation(arg('detector_params'))
+    parameters = [arg('detector_params')]
+    if arg('pointcloud_topic'):
+        parameters.append({'pointcloud_topics': [arg('pointcloud_topic')]})
     nodes = [
         Node(
             package='tf2_ros',
@@ -38,7 +41,7 @@ def detector_nodes(context):
             executable='obstacle_detector_node',
             name='obstacle_detector',
             output='screen',
-            parameters=[arg('detector_params'), {'pointcloud_topic': arg('pointcloud_topic')}],
+            parameters=parameters,
             additional_env={'OMP_NUM_THREADS': '8', 'OPENBLAS_NUM_THREADS': '8'},
         ),
     ]
@@ -55,8 +58,8 @@ def generate_launch_description():
         get_package_share_directory('obstacle_detector'), 'config', 'obstacle_detector.yaml')
 
     return LaunchDescription([
-        DeclareLaunchArgument('pointcloud_topic', default_value='/lidar_points',
-                              description='Топик облака точек лидара'),
+        DeclareLaunchArgument('pointcloud_topic', default_value='',
+                              description='Топик облака лидара; пусто — топики из конфига'),
         DeclareLaunchArgument('lidar_frame', default_value='hesai_lidar',
                               description='frame_id облака лидара'),
         DeclareLaunchArgument('lidar_x', default_value='0.0', description='Лидар в base_link: вперёд, м'),

@@ -1,6 +1,6 @@
 obstacle_detector:
   ros__parameters:
-    pointcloud_topic: '/lidar_points'
+    pointcloud_topics: ['/lidar_points', '/sensing/lidar/hesai128/pointcloud']
     track_frame: 'track'
     lidar_period_s: 0.1
     record_jump_s: 1.0

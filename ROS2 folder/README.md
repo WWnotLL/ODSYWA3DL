@@ -6,15 +6,6 @@
 ```bash
 docker compose build
 ```
-После каждой перезагрузки компьютера:
-```bash
-sudo sysctl -w net.core.rmem_max=2147483647 net.core.rmem_default=26214400
-xhost +local:docker
-```
-Первая команда увеличивает сетевой буфер, чтобы облака лидара (по 8 МБ) не терялись между нодами. Вторая разрешает контейнерам открывать окна, иначе не запустится RViz. Чтобы не вводить первую после каждой перезагрузки, её можно сохранить один раз:
-```bash
-echo -e "net.core.rmem_max=2147483647\nnet.core.rmem_default=26214400" | sudo tee /etc/sysctl.d/60-lidar.conf
-```
 Дальше открываем четыре терминала.
 
 Терминал 1, нода и RViz:
@@ -33,15 +24,20 @@ docker compose run --rm ros2 ros2 topic echo /obstacle/state obstacle_detector_m
 ```bash
 docker compose run --rm ros2 ros2 bag play /workspace/data/scenarios/roundT_doubleT_approach_figure
 ```
-Это синтетическая запись: копия roundT_doubleT, в которую вписан человек на пути. Когда поезд к нему подъезжает, в терминале 3 появляется true, а в RViz красный куб.
 
-Реальные записи лежат в /workspace/data/for_hackathon/: doubleT_platform, roundT_doubleT, roundT_pressureGate_roundT, roundT_squareT_pressureGate_squareT, squareT_platform_squareT_switch. Препятствий на пути в них нет, поэтому там всегда false.
+Записи лежат в /workspace/data/for_hackathon/: doubleT_platform, roundT_doubleT, roundT_pressureGate_roundT, roundT_squareT_pressureGate_squareT, squareT_platform_squareT_switch.
 
 Запись играется один раз, для повтора запустите команду ещё раз. Чтобы крутилась по кругу, допишите в конце --loop и на каждом новом круге нажимайте Reset в RViz внизу слева.
 
-Если компьютер не успевает и часть кадров теряется, можно играть медленнее, дописав --rate 0.5.
+Если не хватает вычислительных мощностей, можно проигрывать запись медленнее, дописав --rate 0.5.
 
-Остановить всё: Ctrl+C в терминале 1, затем docker compose down.
+Терминалы 2, 3, 4 можно запускать и в уже работающем контейнере demo, без новых контейнеров: вместо docker compose run --rm ros2 пишите docker compose exec demo:
+```bash
+docker compose exec demo ros2 topic echo /obstacle/state obstacle_detector_msgs/msg/ObstacleState
+docker compose exec demo ros2 topic echo /obstacle/state obstacle_detector_msgs/msg/ObstacleState --field stop
+docker compose exec demo ros2 bag play /workspace/data/scenarios/roundT_doubleT_approach_figure
+```
+
 ### Что смотреть
 В /obstacle/state на каждый кадр приходит:
 - header.stamp время кадра
@@ -58,11 +54,11 @@ docker compose run --rm ros2 ros2 bag play /workspace/data/scenarios/roundT_doub
 ### Запись результатов
 Пока играет запись, в отдельном терминале:
 ```bash
-docker compose run --rm ros2 ros2 bag record -o /workspace/data/results/my_run /lidar_points /obstacle/state /obstacle/markers /tf /tf_static
+docker compose run --rm ros2 ros2 bag record -o /workspace/data/results/my_run /lidar_points /sensing/lidar/hesai128/pointcloud /obstacle/state /obstacle/markers /tf /tf_static
 ```
 
 ### Подписки и публикации
-Нода слушает /lidar_points (sensor_msgs/PointCloud2). В облаке нужны поля x, y, z, intensity, желательно ещё ring и timestamp.
+Нода слушает сразу два топика, /lidar_points и /sensing/lidar/hesai128/pointcloud (sensor_msgs/PointCloud2). Другой топик можно добавить в конфиг или указать при запуске. В облаке нужны поля x, y, z, intensity, желательно ещё ring и timestamp.
 
 Публикует:
 - /obstacle/state главный результат, тип obstacle_detector_msgs/ObstacleState. Одно сообщение на каждый кадр лидара, время в нём то же, что у кадра. Поля описаны выше в разделе Что смотреть.
@@ -85,7 +81,7 @@ base_link → hesai_lidar → track
 Все настройки в одном файле ROS2 folder/src/obstacle_detector/config/obstacle_detector.yaml. Сверху параметры ноды, под ключом core конфиг алгоритма. После правки перезапустите терминал 1.
 
 Параметры ноды:
-- pointcloud_topic топик, откуда брать облако, по умолчанию /lidar_points
+- pointcloud_topics список топиков, откуда брать облако, по умолчанию /lidar_points и /sensing/lidar/hesai128/pointcloud
 - track_frame имя системы пути в TF и разметке, по умолчанию track
 - lidar_period_s период кадров лидара в секундах, 0.1 для 10 Гц. По нему нода понимает, сколько кадров пропущено между двумя пришедшими, и сообщает это алгоритму.
 - record_jump_s если между кадрами прошло больше этого времени (или время пошло назад), нода считает, что началась другая запись, и сбрасывает алгоритм. По умолчанию 1 с.
@@ -113,10 +109,29 @@ demo запускает по факту под собой и детектор и
 ros2 launch bringup demo.launch.py
 ```
 Аргументы пишутся через :=, например ros2 launch bringup demo.launch.py lidar_z:=1.5
-- pointcloud_topic топик облака, по умолчанию /lidar_points
+- pointcloud_topic слушать только этот топик вместо списка из конфига, например pointcloud_topic:=/my_lidar/points
 - lidar_frame frame_id облака, по умолчанию hesai_lidar
 - lidar_x, lidar_y, lidar_z положение лидара на поезде в метрах
 - bag путь к записи, чтобы она проигралась вместе с нодой
 - detector_params свой конфиг вместо obstacle_detector.yaml
 ### Docker
-Образ собирается из docker/Dockerfile, сервисы описаны в docker-compose.yml: demo нода и RViz, detector только нода, rviz только RViz, ros2 консоль. Папки ROS2 folder/src и data подключены в контейнер, поэтому правки кода и конфига работают без пересборки. Новые файлы и пакеты требуют docker compose build. Проект работает в ROS_DOMAIN_ID=42.
+Образ собирается из docker/Dockerfile, сервисы описаны в docker-compose.yml: demo нода и RViz, detector только нода, rviz только RViz, ros2 консоль. Папки ROS2 folder/src и data подключены в контейнер, поэтому правки кода и конфига работают без пересборки. Новые файлы и пакеты требуют docker compose build.
+
+Перед запуском любого сервиса сам запускается служебный network-setup. Он поднимает на компьютере предел буфера сокета (net.core.rmem_max) до 64 МБ, иначе облака по 8 МБ частично теряются по пути к ноде. Общий буфер для остальных программ не меняется. Настройки DDS лежат в docker/cyclonedds.xml.
+
+Окна (RViz) открываются через файл авторизации текущего сеанса, xhost не нужен. Если RViz всё же пишет, что не может подключиться к дисплею, выполните на компьютере xhost +local:docker.
+
+ROS_DOMAIN_ID берётся из терминала, по умолчанию 0. Если на компьютере работает другой ROS и мешает, запускайте так: ROS_DOMAIN_ID=42 docker compose up demo, и в остальных терминалах с тем же номером.
+
+### Запуск без docker compose
+Если нужно именно docker build и docker run:
+```bash
+docker build -f docker/Dockerfile -t tunnel-lidar-ros2:humble .
+sudo sysctl -w net.core.rmem_max=67108864
+xhost +local:docker
+docker run --rm -it --network host --ipc host --gpus all -e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix -v "$(pwd)/data:/workspace/data" tunnel-lidar-ros2:humble ros2 launch bringup demo.launch.py
+```
+sysctl здесь нужен руками, потому что без compose нет сервиса network-setup, и без него часть кадров теряется. Запись проигрывается из второго терминала:
+```bash
+docker run --rm -it --network host --ipc host -v "$(pwd)/data:/workspace/data" tunnel-lidar-ros2:humble ros2 bag play /workspace/data/scenarios/roundT_doubleT_approach_figure
+```

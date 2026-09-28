@@ -7,6 +7,7 @@ from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Point, Quaternion, TransformStamped, Vector3
 from rclpy.node import Node
 from rclpy.parameter import Parameter
+from rclpy.qos import HistoryPolicy, QoSProfile
 from scipy.spatial.transform import Rotation
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import ColorRGBA
@@ -92,7 +93,7 @@ class ObstacleDetectorNode(Node):
         with open(defaults_path, encoding='utf-8') as file:
             defaults = yaml.safe_load(file)['obstacle_detector']['ros__parameters']
 
-        pointcloud_topic = self.declare_parameter('pointcloud_topic', defaults['pointcloud_topic']).value
+        pointcloud_topics = self.declare_parameter('pointcloud_topics', defaults['pointcloud_topics']).value
         self.track_frame = self.declare_parameter('track_frame', defaults['track_frame']).value
         self.lidar_period_ns = int(self.declare_parameter('lidar_period_s', defaults['lidar_period_s']).value * 1e9)
         self.record_jump_ns = int(self.declare_parameter('record_jump_s', defaults['record_jump_s']).value * 1e9)
@@ -106,9 +107,9 @@ class ObstacleDetectorNode(Node):
         self.markers_pub = self.create_publisher(MarkerArray, '/obstacle/markers', 10)
         self.preview_pub = self.create_publisher(PointCloud2, '/obstacle/cloud_preview', 10)
         self.tf_broadcaster = TransformBroadcaster(self)
-        self.create_subscription(PointCloud2, pointcloud_topic, self.handle_pointcloud, 100)
-
-        self.get_logger().info(f'Listening on {pointcloud_topic}')
+        for topic in pointcloud_topics:
+            self.create_subscription(PointCloud2, topic, self.handle_pointcloud,
+                                     QoSProfile(history=HistoryPolicy.KEEP_ALL))
 
     def declare_core_config(self, core_defaults):
         settings = {}
@@ -149,7 +150,6 @@ class ObstacleDetectorNode(Node):
 
         elapsed_ns = stamp_ns - previous_stamp_ns
         if not 0 < elapsed_ns <= self.record_jump_ns:
-            self.get_logger().info('Record jump detected, resetting detector')
             self.detector.reset()
             return 1
         return max(1, round(elapsed_ns / self.lidar_period_ns))
