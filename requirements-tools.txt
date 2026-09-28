@@ -1,5 +1,0 @@
--r requirements-core.txt
-rosbags>=0.11
-pytest>=8.0
-matplotlib>=3.8
-open3d>=0.19

@@ -4,8 +4,3 @@ version = "0.1.0"
 description = "Ядро обнаружения препятствий по лидару для беспилотного поезда"
 requires-python = ">=3.12"
 
-[tool.pytest.ini_options]
-# Корень проекта в sys.path: тесты импортируют core.* и tools.*
-pythonpath = ["."]
-testpaths = ["tests"]
-addopts = "-q --strict-markers"
