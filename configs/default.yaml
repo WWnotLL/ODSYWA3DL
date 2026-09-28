@@ -1,0 +1,209 @@
+# Все параметры ядра обнаружения препятствий; читается core/config.py.
+data:
+  root: "/home/denimele/hackathon/for_hackathon"
+  obstacle_record: "doubleT_obstacle"
+  records:
+    - "doubleT_obstacle"
+    - "doubleT_platform"
+    - "roundT_doubleT"
+    - "roundT_pressureGate_roundT"
+    - "roundT_squareT_pressureGate_squareT"
+    - "squareT_platform_squareT_switch"
+bag:
+  typestore: "ROS2_HUMBLE"
+  message_type: "sensor_msgs/msg/PointCloud2"
+  preferred_topics:
+    - "/sensing/lidar/hesai128/pointcloud"
+    - "/lidar_points"
+  expected_point_step: 26
+  expected_fields: ["x", "y", "z", "intensity", "ring", "timestamp"]
+  release_page_cache_every_frames: 25
+preprocess:
+  min_range_m: 1.0e-6
+  dual_return:
+    keep: "nearest"
+    secondary_min_delta_m: 0.01
+    direction_digits: 5
+    direction_tolerance: 1.0e-6
+  axes:
+    rotation:
+      - [0.0, -1.0, 0.0]
+      - [1.0,  0.0, 0.0]
+      - [0.0,  0.0, 1.0]
+  numerics:
+    rotation_det_tol: 1.0e-6
+    rotation_orthonormal_tol: 1.0e-6
+    parallel_eps: 1.0e-9
+  ground:
+    zone_min_m: 5.0
+    zone_max_m: 40.0
+    min_zone_points: 2000
+    distance_threshold_m: 0.08
+    max_tilt_deg: 25.0
+    ransac_iterations: 224
+    refit_iterations: 3
+    sample_band_percentile: 25.0
+    hypothesis_chunk: 64
+    seed: 20260920
+    min_inlier_fraction: 0.05
+    up_margin_m: 0.20
+    up_mass_ratio_min: 3.0
+    chord_slab_min_m: 5.0
+    chord_slab_max_m: 15.0
+    chord_min_points: 2000
+    replan_every_n_frames: 50
+    refit_corridor_m: 0.25
+    refit_residual_threshold_m: 0.06
+    candidate_top_k: 8
+    candidate_merge_angle_deg: 2.0
+    candidate_merge_offset_m: 0.10
+    consistency_halfwidth_m: 0.30
+    consistency_max_tilt_deg: 3.0
+    history_length: 21
+  plane_guard:
+    refit_limits:
+      enabled: true
+      min_inliers: 1900
+    plausibility:
+      enabled: true
+      max_tilt_from_base_deg: 4.3
+      max_tilt_step_deg: 1.7
+      max_offset_step_m: 0.19
+    hold:
+      enabled: true
+    rail_check:
+      enabled: true
+      x_min_m: 5.0
+      x_max_m: 15.0
+      head_percentile: 90.0
+      head_min_m: 0.090
+      head_max_m: 0.341
+gauge:
+  half_width_m: 1.60
+  height_reference: "rail_head"
+  z_max_m: 3.90
+  rail_head_offset_m: 0.230
+  y_center_offset_m: null
+  axis_slope: null
+  profile_mm:
+    - [1480,   25]
+    - [1480,  550]
+    - [1480,  740]
+    - [1620, 3280]
+    - [1325, 3625]
+    - [1005, 3745]
+    - [ 355, 3780]
+  contact_rail_exclusion_mm:
+    half_width_min: 1250
+    half_width_max: 1650
+    height_max: 500
+  rail_mask_mm:
+    half_gauge: 800
+    half_width: 120
+    height_max: 60
+    follow_heads: false
+    found_half_width: 113
+  train:
+    enabled: true
+    half_width_m: 1.05
+    height_m: 3.00
+    height_reference: "base"
+  platform_exclusion_mm:
+    lateral_from: 1450
+    lateral_tolerance: 45
+    height_max: 1150
+  platform_evidence:
+    slice_m: 2.0
+    min_points_per_slice: 30
+    continuous_m: 8.0
+    outer_lateral_mm: 2100
+    height_min_mm: 300
+    top_min_mm: 900
+    min_points_above_top: 5
+axis:
+  methods: ["rails", "bed"]
+  extend_base: true
+  correct_extension: false
+  slice_m: 2.5
+  x_min_m: 5.0
+  x_max_m: 60.0
+  min_slices: 6
+  polyline_step_m: 1.0
+  clearance_m: 0.113
+  cross_check: true
+  cross_check_prior_deg: 0.25
+  refine_passes: 2
+  rails:
+    z_min_m: 0.04
+    z_max_m: 0.32
+    histogram_bin_m: 0.04
+    peak_halfwidth_bins: 3
+    min_points: 12
+    search_near_m: 0.35
+    search_far_m: 1.30
+    half_gauge_m: 0.78
+    search_halfwidth_m: 0.45
+    gauge_min_m: 1.40
+    gauge_max_m: 1.72
+  bed:
+    z_min_m: -0.20
+    z_max_m: 0.10
+    lateral_limit_m: 7.0
+    min_points: 12
+    edge_percentile: 10.0
+    width_min_m: 2.84
+    width_max_m: 3.40
+  history:
+    max_slope_step_deg: 0.55
+    max_staleness_frames: 5
+    hold_curvature_radius_m: 300.0
+    gate_m: 0.35
+    anchor_window_frames: 20
+    anchor_init_max_offset_m: 0.70
+    max_slope_step_reference_advance_m: 1.6
+    noise_slope_deg: 0.075
+detector:
+  use_intensity: false
+  min_range_m: 5.0
+  max_range_m: null
+  range_start_slack_m: 2.5
+  z_ground_margin_m: 0.05
+  cluster_eps_base_m: 0.30
+  cluster_eps_per_m: 0.012
+  cluster_min_points: 4
+  min_points_at_reference: 30.0
+  min_points_reference_m: 10.0
+  min_points_floor: 5.0
+  confidence_sigma: 2.0
+  depth_rank: 4
+  min_depth_m: 0.0
+  floor_above_rail_head_m: 0.020
+confirm:
+  enabled: true
+  window_frames: 5
+  required_frames: 3
+  gate_along_m: 1.0
+  gate_along_per_m: 0.03
+  gate_lateral_m: 0.6
+  gate_vertical_m: 0.7
+  unknown_advance_extra_m: 2.0
+  max_missed_frames: 2
+  verdict:
+    memory_frames: 10
+    latch_through_unchecked: true
+odometry:
+  x_min_m: 5.0
+  x_max_m: 60.0
+  bin_m: 0.10
+  detrend_window_bins: 25
+  max_shift_m: 3.0
+  min_points_per_bin: 5
+  min_prominence: 4.0
+  channels: ["count", "intensity", "radius"]
+format_check:
+  record: "doubleT_obstacle"
+  frame_index: 0
+  expected_points: 921600
+  expected_valid_points: 346808
+  expected_echoes_per_shot: 2
+  valid_points_tol: 2000
