@@ -1,4 +1,5 @@
-Нода obstacle_detector принимает облако точек лидара, отдаёт каждый кадр алгоритму из папки core и публикует результат: есть ли препятствие на пути и на каком оно расстоянии. Всё работает в Docker (Ubuntu 22.04, ROS2 Humble). Нужны Docker, видеокарта NVIDIA и nvidia-container-toolkit. Записи лежат в папке data репозитория, внутри контейнера это /workspace/data.
+Нода obstacle_detector принимает облако точек лидара, отдаёт каждый кадр алгоритму из папки core и публикует результат: есть ли препятствие на пути и на каком оно расстоянии. Всё работает в Docker (Ubuntu 22.04, ROS2 Humble). Нужен только Docker, видеокарта не обязательна. Есть два варианта запуска: если есть видеокарта NVIDIA и nvidia-container-toolkit, RViz рисует на видеокарте, если нет, всё работает на процессоре. Команды для обоих ниже, в терминале 1. Записи лежат в папке data репозитория, внутри контейнера это /workspace/data.
+
 ### Запуск
 Все команды выполняются из корня репозитория Obstacle-detection-system-with-a-3D-lidar.
 
@@ -6,11 +7,17 @@
 ```bash
 docker compose build
 ```
-Дальше открываем четыре терминала.
+Дальше открываем четыре терминала. Терминалы 2–4 можно запускать двумя способами, оба работают одинаково: отдельными контейнерами (docker compose run, как ниже) или внутри контейнера demo (docker compose exec, в конце раздела).
 
-Терминал 1, нода и RViz:
+Терминал 1, нода и RViz.
+
+Если nvidia-container-toolkit нет (RViz рисует на процессоре):
 ```bash
 docker compose up demo
+```
+Если есть видеокарта NVIDIA и nvidia-container-toolkit (RViz рисует на видеокарте, плавнее):
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up demo
 ```
 Терминал 2, полный результат по каждому кадру:
 ```bash
@@ -129,9 +136,9 @@ ROS_DOMAIN_ID берётся из терминала, по умолчанию 0.
 docker build -f docker/Dockerfile -t tunnel-lidar-ros2:humble .
 sudo sysctl -w net.core.rmem_max=67108864
 xhost +local:docker
-docker run --rm -it --network host --ipc host --gpus all -e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix -v "$(pwd)/data:/workspace/data" tunnel-lidar-ros2:humble ros2 launch bringup demo.launch.py
+docker run --rm -it --network host --ipc host -e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix -v "$(pwd)/data:/workspace/data" tunnel-lidar-ros2:humble ros2 launch bringup demo.launch.py
 ```
-sysctl здесь нужен руками, потому что без compose нет сервиса network-setup, и без него часть кадров теряется. Запись проигрывается из второго терминала:
+С видеокартой NVIDIA и nvidia-container-toolkit в команду можно добавить --gpus all. sysctl здесь нужен руками, потому что без compose нет сервиса network-setup, и без него часть кадров теряется. Запись проигрывается из второго терминала:
 ```bash
 docker run --rm -it --network host --ipc host -v "$(pwd)/data:/workspace/data" tunnel-lidar-ros2:humble ros2 bag play /workspace/data/scenarios/roundT_doubleT_approach_figure
 ```
