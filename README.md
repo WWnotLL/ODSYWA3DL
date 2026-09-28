@@ -26,7 +26,7 @@
 - [Docker](#docker)
 - [Описание ROS2](#описание-ros2)
 - [Результаты экспериментов](#результаты-экспериментов)
-- __[Видео работы (добавить)]([#видео-работы](https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar/tree/main/videos))__
+- [Видео работы (добавить)](https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar/tree/main/videos)
 - [Эволюция подхода](#эволюция-подхода)
 - [Параметры конфигурации](#параметры-конфигурации)
 - [Тестирование работы алгоритма](#тестирование-работы-алгоритма)
