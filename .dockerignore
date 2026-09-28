@@ -1,7 +1,4 @@
 data/
 .git/
-ROS2 folder/build/
-ROS2 folder/install/
-ROS2 folder/log/
+.venv/
 **/__pycache__/
-*.pyc

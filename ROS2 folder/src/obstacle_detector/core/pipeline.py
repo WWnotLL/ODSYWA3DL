@@ -6,10 +6,10 @@ import time
 
 import numpy as np
 
-from core.axis import AxisTracker
+from core.axis import AxisTracker, rail_head_lines
 from core.confirm import LATERAL_KEY, AxisLossVerdict, Confirmer
 from core.config import Config
-from core.detector import detect
+from core.detector import detect, drop_shallow
 from core.odometry import estimate_shift, longitudinal_profile
 from core.preprocess import GroundTracker, PreprocessError, preprocess_frame
 from core.types import FrameResult
@@ -18,7 +18,7 @@ from core.types import FrameResult
 class ObstacleDetector:
     def __init__(self, config: Config, *, confirm: bool | None = None) -> None:
         self._cfg = config
-        self._ground = GroundTracker(config.preprocess.ground)
+        self._ground = GroundTracker(config.preprocess.ground, config.preprocess.plane_guard, config.axis)
         self._axis = AxisTracker(config.axis)
 
 
@@ -51,12 +51,13 @@ class ObstacleDetector:
         return self._verdict
 
 
-    def process(self, xyz: np.ndarray, intensity: np.ndarray, ring: np.ndarray,
-                t_rel: np.ndarray, stamp_ns: int, *, frame_gap: int = 1) -> FrameResult:
+    def process(self, xyz: np.ndarray, intensity: np.ndarray, ring: np.ndarray | None,
+                t_rel: np.ndarray | None, stamp_ns: int, *, frame_gap: int = 1) -> FrameResult:
         marks = [time.perf_counter()]
         try:
             prepared = preprocess_frame(
-                xyz, intensity, ring, t_rel, self._cfg.preprocess, tracker=self._ground)
+                xyz, intensity, ring, t_rel, self._cfg.preprocess, tracker=self._ground,
+                frame_gap=frame_gap + self._pending_gap)
         except PreprocessError as error:
             self._pending_gap += frame_gap
             return self._unchecked(str(error), marks[0])
@@ -65,16 +66,25 @@ class ObstacleDetector:
         self._pending_gap = 0
 
         advance_m = self._advance(prepared.xyz, prepared.intensity, stamp_ns)
+        self._ground.note_advance(advance_m, frame_gap)
         marks.append(time.perf_counter())
 
         axis = self._axis.update(prepared.xyz, frame_gap=frame_gap, advance_m=advance_m)
         marks.append(time.perf_counter())
 
-        outcome = detect(prepared.xyz, axis, self._cfg.gauge, self._cfg.detector)
+        heads = (rail_head_lines(prepared.xyz, axis, self._cfg.axis)
+                 if axis is not None and self._cfg.gauge.rail_mask_follow_heads else None)
+        outcome = detect(prepared.xyz, axis, self._cfg.gauge, self._cfg.detector, heads=heads)
         marks.append(time.perf_counter())
 
 
         outcome.debug["frame_transform"] = prepared.transform.to_debug()
+        if self._ground.guarded:
+            outcome.debug["plane_guard"] = self._ground.last_guard
+        outcome.debug["dual_return"] = {
+            "pairing": prepared.stats["dual_return_pairing"],
+            "n_unpaired": prepared.stats["n_unpaired"],
+        }
 
 
         if outcome.debug["axis"] is None:
@@ -86,8 +96,11 @@ class ObstacleDetector:
         candidates = {
             "detections": [d.to_dict() for d in outcome.detections],
             LATERAL_KEY: list(outcome.debug.get(LATERAL_KEY, [])),
+            "depth_m": list(outcome.debug.get("depth_m", [])),
+            "min_depth_m": self._cfg.detector.min_depth_m,
         }
         had_candidate = bool(outcome.detections)
+        outcome = drop_shallow(outcome, self._cfg.detector.min_depth_m)
         if self._confirmer is not None:
             outcome = self._confirmer.update(outcome, advance_m=advance_m)
         self._verdict.update(outcome, had_candidate=had_candidate)
@@ -108,14 +121,20 @@ class ObstacleDetector:
 
     def _unchecked(self, reason: str, started: float) -> FrameResult:
         elapsed = round(1e3 * (time.perf_counter() - started), 3)
-        return FrameResult(False, None, [], {
+        debug = {
             "layer": "A",
             "checked": False,
             "reason": "frame_unusable",
             "detail": reason,
             "pending_gap_frames": self._pending_gap,
             "timings_ms": {"total": elapsed},
-        })
+        }
+        if self._ground.guarded:
+            debug["plane_guard"] = self._ground.last_guard
+        if self._cfg.confirm.verdict.latch_through_unchecked and self._verdict.stopped:
+            debug["verdict"] = {"rule": "В₂", "stop": True, "reason": "latched_through_unchecked",
+                                "axis_state": "unchecked"}
+        return FrameResult(False, None, [], debug)
 
     def _advance(self, xyz: np.ndarray, intensity: np.ndarray,
                  stamp_ns: int) -> float | None:

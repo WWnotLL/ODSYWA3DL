@@ -35,12 +35,15 @@ Visualization Manager:
       Plane Cell Count: 200
       Reference Frame: <Fixed Frame>
       Value: true
-    - Class: rviz_default_plugins/Axes
+    - Class: rviz_default_plugins/TF
       Enabled: true
-      Length: 1
-      Name: Axes
-      Radius: 0.10000000149011612
-      Reference Frame: <Fixed Frame>
+      Frame Timeout: 15
+      Marker Scale: 1
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Update Interval: 0
       Value: true
     - Alpha: 1
       Autocompute Intensity Bounds: true
@@ -60,7 +63,7 @@ Visualization Manager:
       Max Intensity: 4096
       Min Color: 0; 0; 0
       Min Intensity: 0
-      Name: PointCloud2 (/lidar_points)
+      Name: PointCloud2 (/obstacle/cloud_preview)
       Position Transformer: XYZ
       Selectable: true
       Size (Pixels): 2
@@ -72,7 +75,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Best Effort
-        Value: /lidar_points
+        Value: /obstacle/cloud_preview
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
@@ -81,14 +84,14 @@ Visualization Manager:
       Autocompute Value Bounds:
         Max Value: 10
         Min Value: -10
-        Value: true
+        Value: false
       Axis: Z
       Channel Name: intensity
       Class: rviz_default_plugins/PointCloud2
       Color: 255; 255; 255
       Color Transformer: Intensity
       Decay Time: 0
-      Enabled: true
+      Enabled: false
       Invert Rainbow: false
       Max Color: 255; 255; 255
       Max Intensity: 255
@@ -109,7 +112,7 @@ Visualization Manager:
         Value: /sensing/lidar/hesai128/pointcloud
       Use Fixed Frame: true
       Use rainbow: true
-      Value: true
+      Value: false
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
       Name: MarkerArray (obstacle_detector)
@@ -125,7 +128,7 @@ Visualization Manager:
   Enabled: true
   Global Options:
     Background Color: 0; 0; 0
-    Fixed Frame: map
+    Fixed Frame: base_link
     Frame Rate: 30
   Name: root
   Tools:
