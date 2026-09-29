@@ -11,8 +11,7 @@ import numpy as np
 
 from types import SimpleNamespace
 
-from core.axis import (AxisTracker, _bed_centres, _rail_centres, _trim_to_clearance,
-                       extension_correction)
+from core.axis import AxisTracker, _bed_centres, _rail_centres, _trim_to_clearance
 from core.config import Config
 from core.odometry import estimate_shift, longitudinal_profile
 from core.preprocess import GroundTracker, preprocess_frame
@@ -21,6 +20,18 @@ from tools.measure_wall import FACE_RANK, SLICE_M, _kth
 
 
 FACE_BAND_M = 0.05
+
+
+def extension_correction(near: np.ndarray, far: np.ndarray, cfg
+                         ) -> tuple[float, float, float, float] | None:
+    near_idx = np.floor((near[:, 0] - cfg.x_min_m) / cfg.slice_m).astype(int)
+    far_idx = np.floor((far[:, 0] - cfg.x_min_m) / cfg.slice_m).astype(int)
+    common, ni, fi = np.intersect1d(near_idx, far_idx, return_indices=True)
+    if common.size < cfg.min_slices:
+        return None
+    x = near[ni, 0]
+    slope, shift = np.polyfit(x, far[fi, 1] - near[ni, 1], 1)
+    return float(slope), float(shift), float(x.min()), float(x.max())
 
 
 def _faces(values: np.ndarray) -> tuple[float, float] | None:
@@ -38,10 +49,7 @@ def _correction(rails: np.ndarray, bed: np.ndarray, x_min: float, slice_m: float
 
 
 def _raw_far(axis) -> tuple[float, float]:
-    if axis.far_correction_slope is None:
-        return axis.far_slope, axis.far_y0_m
-    return (axis.far_slope + axis.far_correction_slope,
-            axis.far_y0_m + axis.far_correction_shift_m)
+    return axis.far_slope, axis.far_y0_m
 
 
 def run(cfg: Config, record: str, lateral: tuple[float, float], height: tuple[float, float],

@@ -115,7 +115,8 @@ def scenario_range(cfg: Config, args) -> tuple[dict, int, int]:
 
 
 def _extension_correction(xyz: np.ndarray, cfg: Config) -> tuple[float, float] | None:
-    from core.axis import _bed_centres, _rail_centres, extension_correction
+    from core.axis import _bed_centres, _rail_centres
+    from tools.measure_extension_residual import extension_correction
     rails, _ = _rail_centres(xyz, cfg.axis)
     bed, _ = _bed_centres(xyz, cfg.axis)
     if rails is None or bed is None:
@@ -166,7 +167,7 @@ def iter_scenario_frames(cfg: Config, args, *, raw: bool) -> Iterator[ScenarioFr
                     continue
             geometry = _placement(args.scenario, cfg, clean_axis, distance, args)
             if (args.placement_axis == "corrected" and clean_axis.x_joint_m is not None
-                    and clean_axis.far_method == "bed" and clean_axis.far_correction_slope is None
+                    and clean_axis.far_method == "bed"
                     and distance > clean_axis.x_joint_m):
                 fix = _extension_correction(result.xyz, cfg)
                 if fix is None:

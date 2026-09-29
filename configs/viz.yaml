@@ -34,6 +34,7 @@ colors:
   points: "#7f7f7f"
   axis_rails: "#1f77b4"
   axis_bed: "#ff7f0e"
+  axis_walls: "#2ca02c"
   corridor: "#2ca02c"
   cut_platform: "#9467bd"
   cut_contact_rail: "#8c564b"

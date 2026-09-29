@@ -196,7 +196,7 @@ def _draw_top(ax, view: FrameView, gauge: GaugeConfig, viz: dict) -> None:
     railhead = gauge.rail_head_offset_m or 0.0
     if poly is not None:
         line, source = poly
-        for kind, style in (("rails", "-"), ("bed", "--")):
+        for kind, style in (("rails", "-"), ("bed", "--"), ("walls", ":")):
             mask = np.array([s == kind for s in source])
             if mask.any():
                 ax.plot(line[mask, 0], line[mask, 1], style, lw=st["line_width"],

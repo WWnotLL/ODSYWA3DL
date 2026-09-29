@@ -37,4 +37,4 @@ cloud_with_fake_obj*.zst
 
 # Документы — локальные; в репозиторий идёт только README.md
 *.md
-!README.md
+answer.ipynb

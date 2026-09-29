@@ -103,7 +103,7 @@ def load(cfg: Config, record: str, first: int, last: int, stride: int,
     detector = ObstacleDetector(cfg)
     frames: list[ViewFrame] = []
     bag_dir = Path(record) if Path(record).is_dir() else cfg.data.path(record)
-    for f in iter_frames(bag_dir, cfg.bag, limit=last + 1):
+    for f in iter_frames(bag_dir, cfg.bag, limit=last + 1, partial=True):
         result = detector.process(f.xyz, f.intensity, f.ring, f.timestamp, f.stamp_ns)
         if f.index < first:
             continue

@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 
 import numpy as np
+import pytest
 from scipy.spatial import cKDTree
 
 from core.config import Config
@@ -170,20 +171,35 @@ def test_frame_transform_maps_the_raw_cloud_onto_the_detector_cloud(cfg: Config)
     assert mapped.shape[0] == prepared.xyz.shape[0]
 
 
-def test_axis_is_exported_as_a_polyline_over_the_base(cfg: Config) -> None:
+@pytest.mark.parametrize("walls", [False, True])
+def test_axis_is_exported_as_a_polyline_over_the_base(cfg: Config, walls: bool) -> None:
+    cfg = dataclasses.replace(cfg, axis=dataclasses.replace(
+        cfg.axis, walls=dataclasses.replace(cfg.axis.walls, enabled=walls)))
     detector = ObstacleDetector(cfg)
     for frame in _frames(cfg, 3, with_body=False):
         outcome = detector.process(*frame)
     axis = outcome.debug["axis"]
     line = axis["polyline"]
     points = np.asarray(line["points_xy_m"])
+    tracked = detector.axis_tracker.last
     assert line["step_m"] == cfg.axis.polyline_step_m
-    assert points[0, 0] == round(detector.axis_tracker.last.x_start_m, 4)
-    assert points[-1, 0] == round(detector.axis_tracker.last.x_end_m, 4)
+    assert points[0, 0] == round(tracked.x_start_m, 4)
     assert np.allclose(np.diff(points[:-1, 0]), cfg.axis.polyline_step_m, atol=1e-3)
-    assert np.allclose(points[:, 1], detector.axis_tracker.last.y_at(points[:, 0]), atol=1e-4)
-    assert set(line["source"]) <= {"rails", "bed"}
     assert axis["reason"] is None and axis["state"] == "measured"
+    if not walls:
+        assert points[-1, 0] == round(tracked.x_end_m, 4)
+        assert np.allclose(points[:, 1], tracked.y_at(points[:, 0]), atol=1e-4)
+        assert set(line["source"]) <= {"rails", "bed"}
+        return
+    assert axis["walls"]["used"]
+    assert points[-1, 0] == pytest.approx(outcome.debug["corridor"]["x_m"][1], abs=0.01)
+    near = points[:, 0] <= tracked.x_end_m
+    assert np.allclose(points[near, 1], tracked.y_at(points[near, 0]), atol=1e-4)
+    assert set(line["source"]) <= {"rails", "bed", "walls"}
+    on_walls = np.array([s == "walls" for s in line["source"]])
+    assert not on_walls.any() or axis["walls"]["used"]
+    if on_walls.any():
+        assert on_walls[np.argmax(on_walls):].all()
 
 
 def test_missing_axis_carries_its_reason(cfg: Config) -> None:
@@ -243,7 +259,6 @@ def test_the_default_config_uses_the_train_gauge_rule(cfg: Config) -> None:
     assert cfg.detector.min_points_at_reference == 30.0
     assert cfg.detector.floor_above_rail_head_m == 0.02
     assert cfg.gauge.rail_mask_follow_heads is False
-    assert cfg.axis.correct_extension is False
 
 
 def test_a_shallow_candidate_alarms_with_the_threshold_off(cfg: Config) -> None:
