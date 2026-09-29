@@ -1,4 +1,4 @@
-![](https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar/blob/main/pictures/1790083293.png)
+![](https://github.com/WWnotLL/ODSYWA3DL/blob/main/pictures/1790083293.png)
 
 **Всех приветствуем!**   
 Мы - команда **«Ящик»**, и представляем вам своё решение задачи.
@@ -6,11 +6,11 @@
 **Состав команды**
 |ФИО|Роль|Резюме|
 |---|---|---|
-|Асанов Салим Тимурович|TeamLead, QA-инженер|__[Резюме Асанов С.Т.](https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar/blob/main/Резюме/Асанов%20Салим.pdf)__|
-|Журавлев Егор Дмитриевич|Разработчик робототехники (ROS2)|__[Резюме Журавлев Е.Г.](https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar/blob/main/Резюме/zhuravlev_egor.pdf)__|
+|Асанов Салим Тимурович|TeamLead, QA-инженер|__[Резюме Асанов С.Т.](https://github.com/WWnotLL/ODSYWA3DL/blob/main/Резюме/Асанов%20Салим.pdf)__|
+|Журавлев Егор Дмитриевич|Разработчик робототехники (ROS2)|__[Резюме Журавлев Е.Г.](https://github.com/WWnotLL/ODSYWA3DL/blob/main/Резюме/zhuravlev_egor.pdf)__|
 |Коновалов Сергей Алексеевич|Системный аналитик|---|
-|Кузнецов Михаил Эдуардович|Разработчик ПО|__[Резюме Кузнецов М.Э.](https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar/blob/main/Резюме/Кузнецов_Михаил_Embedded_LInux.pdf)__|
-|Кузьменок Денис Федорович|Специалист по работе с данными|__[Резюме Кузьменок Д.Ф.](https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar/blob/main/Резюме/Кузьменок_Денис_Федорович_ML_Engineer.pdf)__|
+|Кузнецов Михаил Эдуардович|Разработчик ПО|__[Резюме Кузнецов М.Э.](https://github.com/WWnotLL/ODSYWA3DL/blob/main/Резюме/Кузнецов_Михаил_Embedded_LInux.pdf)__|
+|Кузьменок Денис Федорович|Специалист по работе с данными|__[Резюме Кузьменок Д.Ф.](https://github.com/WWnotLL/ODSYWA3DL/blob/main/Резюме/Кузьменок_Денис_Федорович_ML_Engineer.pdf)__|
 
 **Наша цель** - дать беспилотному поезду возможность заранее заметить препятствие на пути, вовремя подать сигнал об остановке или снижении скорости, минимизируя при этом количество ложных срабатываний.
 
@@ -25,13 +25,13 @@
 - [Docker](#docker)
 - [Описание ROS2](#описание-ros2)
 - [Результаты экспериментов](#результаты-экспериментов)
-- [Видео работы алгоритма](https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar/tree/main/videos)
+- [Видео работы алгоритма](https://github.com/WWnotLL/ODSYWA3DL/tree/main/videos)
 - [Эволюция подхода](#эволюция-подхода)
 - [Параметры конфигурации](#параметры-конфигурации)
 - [Тестирование работы алгоритма](#тестирование-работы-алгоритма)
 
 ## Архитектура решения
-![](https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar/blob/main/pictures/архитектура%20решения.png)
+![](https://github.com/WWnotLL/ODSYWA3DL/blob/main/pictures/архитектура%20решения.png)
 
 ## Геометрия вместо нейросетей, или как работает наш алгоритм 
 
@@ -99,7 +99,7 @@
 2. **Уверенность обнаружения:** Рассчитывается как отношение запаса расстояния от кластера точек до начала "запретной зоны" к неопределенности положения оси пути. Чем ближе объект к центру поперечного сечения "запретной зоны" — тем выше уверенность.
 3. **Отсутствие ML:** В ядре алгоритма нет весов нейросетей, градиентного спуска или обучения. Это детерминированная математическая функция: `f(облако_точек) -> решение`.
 
-*(Примечание: Подробное API ядра, форматы входных/выходных массивов и т.д. вынесены в отдельный документ __[API_REFERENCE.md](https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar/blob/main/docs/API_REFERENCE.md)__, чтобы не перегружать этот раздел).*
+*(Примечание: Подробное API ядра, форматы входных/выходных массивов и т.д. вынесены в отдельный документ __[API_REFERENCE.md](https://github.com/WWnotLL/ODSYWA3DL/blob/main/docs/API_REFERENCE.md)__, чтобы не перегружать этот раздел).*
 
 ## Быстрый старт
 В настоящем разделе представлена инструкция по запуску нашего решения
@@ -123,8 +123,8 @@ ROS_DOMAIN_ID берётся из терминала, по умолчанию 0.
 ### Алгоритм запуска
 #### 1. Клонируйте репозиторий
    ```
-   git clone https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar.git
-   cd Obstacle-detection-system-with-a-3D-lidar
+   git clone https://github.com/WWnotLL/ODSYWA3DL.git
+   cd ODSYWA3DL
    ```
 
 **Все команды выполняются из корня репозитория**
@@ -273,7 +273,7 @@ demo запускает по факту под собой и детектор и
 ---
 
 ## Результаты экспериментов
-*Полное описание результатов приведено в файле ___[docs/EXPERIMENTS.md](https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar/blob/main/docs/EXPERIMENTS.md)___.*<br>
+*Полное описание результатов приведено в файле ___[docs/EXPERIMENTS.md](https://github.com/WWnotLL/ODSYWA3DL/blob/main/docs/EXPERIMENTS.md)___.*<br>
 <br>
 Все замеры выполнены на стенде, соответствующем требованиям ТЗ: **Intel Core i7-9700E, 8 ядер, 2.60 GHz**, при явном ограничении потоков BLAS (`OMP_NUM_THREADS=8`, `OPENBLAS_NUM_THREADS=8`). Без этого ограничения время обработки может вырасти в 2–3 раза.
 
@@ -463,7 +463,7 @@ demo запускает по факту под собой и детектор и
 
 ## Эволюция подхода
 
-*Полный технический разбор доступен в [EVOLUTION.md](https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar/blob/main/docs/EVOLUTION.md). Ниже — ключевые вехи.*
+*Полный технический разбор доступен в [EVOLUTION.md](https://github.com/WWnotLL/ODSYWA3DL/blob/main/docs/EVOLUTION.md). Ниже — ключевые вехи.*
 
 Мы пришли к финальному решению не сразу. Ниже показан ход наших мыслей при обсуждении планов по решению задачи, ниже представляем вам ккак мы отсеивали гипотезы:
 |№|Название гипотезы|Комментарий|
@@ -486,7 +486,7 @@ demo запускает по факту под собой и детектор и
 ---
 
 ## Параметры конфигурации
-Все необходимые параметры алгоритма находятся в файле __[default.yaml](https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar/blob/develop_ml/configs/default.yaml)__
+Все необходимые параметры алгоритма находятся в файле __[default.yaml](https://github.com/WWnotLL/ODSYWA3DL/blob/develop_ml/configs/default.yaml)__
 
 Изменить параметры без пересборки образа можно, используя следующие команды:
    ```
@@ -499,7 +499,7 @@ demo запускает по факту под собой и детектор и
 ---
 
 ## Тестирование работы алгоритма
-Разработанные unit-тесты расположены в папке __[tests](https://github.com/WWnotLL/Obstacle-detection-system-with-a-3D-lidar/tree/develop_ml/tests)__
+Разработанные unit-тесты расположены в папке __[tests](https://github.com/WWnotLL/ODSYWA3DL/tree/develop_ml/tests)__
 
 
 Запустите unit-тесты ядра
