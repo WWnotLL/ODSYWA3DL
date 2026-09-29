@@ -9,6 +9,11 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from scipy.spatial.transform import Rotation
 
+LIDAR_MOUNTS = {
+    'hesai_lidar': 1.081,
+    'lidar_livox': 1.71,
+}
+
 
 def lidar_rotation(detector_params):
     with open(detector_params, encoding='utf-8') as file:
@@ -25,17 +30,22 @@ def detector_nodes(context):
     parameters = [arg('detector_params')]
     if arg('pointcloud_topic'):
         parameters.append({'pointcloud_topics': [arg('pointcloud_topic')]})
+    mounts = {frame: ('0.0', '0.0', str(z)) for frame, z in LIDAR_MOUNTS.items()}
+    mounts[arg('lidar_frame')] = (arg('lidar_x'), arg('lidar_y'), arg('lidar_z'))
     nodes = [
         Node(
             package='tf2_ros',
             executable='static_transform_publisher',
-            name='lidar_mount',
+            name=f'lidar_mount_{frame}',
             arguments=[
-                '--frame-id', 'base_link', '--child-frame-id', arg('lidar_frame'),
-                '--x', arg('lidar_x'), '--y', arg('lidar_y'), '--z', arg('lidar_z'),
+                '--frame-id', 'base_link', '--child-frame-id', frame,
+                '--x', x, '--y', y, '--z', z,
                 '--qx', str(qx), '--qy', str(qy), '--qz', str(qz), '--qw', str(qw),
             ],
-        ),
+        )
+        for frame, (x, y, z) in mounts.items()
+    ]
+    nodes += [
         Node(
             package='obstacle_detector',
             executable='obstacle_detector_node',
