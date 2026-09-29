@@ -259,6 +259,35 @@ class GaugeConfig:
 
 
 @dataclass(frozen=True)
+class WallsConfig:
+    enabled: bool
+    lateral_limit_m: float
+    voxel_m: float
+    height_bins_m: np.ndarray
+    side_min_m: float
+    side_max_m: float
+    cal_bin_m: float
+    cal_min_points: int
+    cal_peak_fraction: float
+    cal_spread_m: float
+    cal_min_slices: int
+    cal_slice_fraction: float
+    cal_min_bins: int
+    slice_m: float
+    far_end_m: float
+    gate_m: float
+    sample_min_points: int
+    fit_window_m: float
+    fit_quadratic_span_m: float
+    fit_quadratic_points: int
+    width_tol_m: float
+    polyline_window_m: float
+    polyline_min_points: int
+    polyline_quadratic_points: int
+    step_m: float
+
+
+@dataclass(frozen=True)
 class AxisConfig:
     methods: tuple[str, ...]
     slice_m: float
@@ -295,12 +324,12 @@ class AxisConfig:
     cross_check: bool
     cross_check_prior_deg: float
     extend_base: bool
-    correct_extension: bool
     hold_curvature_radius_m: float
     gate_m: float
     anchor_window_frames: int
     anchor_init_max_offset_m: float
     polyline_step_m: float
+    walls: WallsConfig
 
     @property
     def max_hold_path_m(self) -> float:
@@ -649,6 +678,41 @@ class Config:
         rails_s = axis_s.section("rails")
         bed_s = axis_s.section("bed")
         hist_s = axis_s.section("history")
+        walls_s = axis_s.section("walls")
+        wcal_s = walls_s.section("calibration")
+        heights = np.asarray(walls_s._raw("height_bins_m"), dtype=float)
+        if heights.ndim != 1 or heights.size < 2 or np.any(np.diff(heights) <= 0.0):
+            raise ConfigError("axis.walls.height_bins_m: нужен возрастающий список не меньше двух границ")
+        walls = WallsConfig(
+            enabled=walls_s.flag("enabled"),
+            lateral_limit_m=walls_s.num("lateral_limit_m"),
+            voxel_m=walls_s.num("voxel_m"),
+            height_bins_m=heights,
+            side_min_m=walls_s.num("side_min_m"),
+            side_max_m=walls_s.num("side_max_m"),
+            cal_bin_m=wcal_s.num("bin_m"),
+            cal_min_points=wcal_s.integer("min_points"),
+            cal_peak_fraction=wcal_s.num("peak_fraction"),
+            cal_spread_m=wcal_s.num("spread_m"),
+            cal_min_slices=wcal_s.integer("min_slices"),
+            cal_slice_fraction=wcal_s.num("slice_fraction"),
+            cal_min_bins=wcal_s.integer("min_bins"),
+            slice_m=walls_s.num("slice_m"),
+            far_end_m=walls_s.num("far_end_m"),
+            gate_m=walls_s.num("gate_m"),
+            sample_min_points=walls_s.integer("sample_min_points"),
+            fit_window_m=walls_s.num("fit_window_m"),
+            fit_quadratic_span_m=walls_s.num("fit_quadratic_span_m"),
+            fit_quadratic_points=walls_s.integer("fit_quadratic_points"),
+            width_tol_m=walls_s.num("width_tol_m"),
+            polyline_window_m=walls_s.num("polyline_window_m"),
+            polyline_min_points=walls_s.integer("polyline_min_points"),
+            polyline_quadratic_points=walls_s.integer("polyline_quadratic_points"),
+            step_m=walls_s.num("step_m"),
+        )
+        wcal_s.close(); walls_s.close()
+        if walls.side_min_m >= walls.side_max_m:
+            raise ConfigError("axis.walls: side_min_m должен быть меньше side_max_m")
         axis = AxisConfig(
             methods=methods,
             slice_m=axis_s.num("slice_m"),
@@ -683,12 +747,12 @@ class Config:
             cross_check=axis_s.flag("cross_check"),
             cross_check_prior_deg=axis_s.num("cross_check_prior_deg"),
             extend_base=axis_s.flag("extend_base"),
-            correct_extension=axis_s.flag("correct_extension"),
             hold_curvature_radius_m=hist_s.num("hold_curvature_radius_m"),
             gate_m=hist_s.num("gate_m"),
             anchor_window_frames=hist_s.integer("anchor_window_frames"),
             anchor_init_max_offset_m=hist_s.num("anchor_init_max_offset_m"),
             polyline_step_m=axis_s.num("polyline_step_m"),
+            walls=walls,
         )
         rails_s.close(); bed_s.close(); hist_s.close(); axis_s.close()
         if axis.polyline_step_m <= 0.0:
@@ -728,6 +792,8 @@ class Config:
             raise ConfigError("gauge.rail_mask_mm.found_half_width должна быть положительной")
         if detector.floor_above_rail_head_m is not None and gauge.rail_head_offset_m is None:
             raise ConfigError("detector.floor_above_rail_head_m задаётся только вместе с gauge.rail_head_offset_m")
+        if axis.walls.enabled and gauge.rail_head_offset_m is None:
+            raise ConfigError("axis.walls включается только вместе с gauge.rail_head_offset_m: полосы высот стен считаются от УГР")
         if detector.use_intensity:
             raise ConfigError(
                 "detector.use_intensity: ядро детекции не должно использовать интенсивность — "

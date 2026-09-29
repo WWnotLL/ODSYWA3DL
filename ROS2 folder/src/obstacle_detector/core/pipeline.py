@@ -13,6 +13,7 @@ from core.detector import detect, drop_shallow
 from core.odometry import estimate_shift, longitudinal_profile
 from core.preprocess import GroundTracker, PreprocessError, preprocess_frame
 from core.types import FrameResult
+from core.walls import extend_by_walls
 
 
 class ObstacleDetector:
@@ -70,6 +71,8 @@ class ObstacleDetector:
         marks.append(time.perf_counter())
 
         axis = self._axis.update(prepared.xyz, frame_gap=frame_gap, advance_m=advance_m)
+        if self._cfg.axis.walls.enabled:
+            axis = extend_by_walls(axis, prepared.xyz, self._cfg.axis.walls, self._cfg.gauge.rail_head_offset_m)
         marks.append(time.perf_counter())
 
         heads = (rail_head_lines(prepared.xyz, axis, self._cfg.axis)
