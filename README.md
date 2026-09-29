@@ -134,6 +134,14 @@ ROS_DOMAIN_ID берётся из терминала, по умолчанию 0.
    ```
    docker compose build
    ```
+Требует интернета и занимает несколько минут, но делается один раз. Повторять сборку нужно, только если менялся Dockerfile или добавлялись новые файлы в пакеты ROS: правки кода и конфигов подхватываются сами.
+
+Если сборка падает с ошибкой network is unreachable, скачайте базовый образ отдельной командой и повторите сборку:
+   ```
+   docker pull osrf/ros:humble-desktop
+   docker compose build
+   ```
+Так бывает, когда на машине объявлен, но не работает IPv6: docker pull обходит эту проблему, а сборка дальше берёт образ с диска.
 #### 3. Запуск четырех терминалов
 Терминалы 2–4 можно запускать двумя способами, оба работают одинаково: отдельными контейнерами (docker compose run, как ниже) или внутри контейнера demo (docker compose exec, [в конце раздела](#запуск-терминалов-в-работающем-контейнере)).<br>
 **Терминал 1 - нода и RViz.** <br>
@@ -145,6 +153,8 @@ ROS_DOMAIN_ID берётся из терминала, по умолчанию 0.
    ```
    docker compose -f docker-compose.yml -f docker-compose.gpu.yml up demo
    ```
+Здесь указаны два файла, потому что docker-compose.gpu.yml самостоятельным не является: он только добавляет доступ к видеокарте к сервисам demo и rviz, всё остальное берётся из docker-compose.yml. Сам образ от видеокарты не зависит и одинаков в обоих случаях, драйвер пробрасывается снаружи при запуске. Поэтому первая команда работает на любой машине, а вторая - только там, где установлен nvidia-container-toolkit.
+
 **Терминал 2 - полный результат по каждому кадру:**
    ```
    docker compose run --rm ros2 ros2 topic echo /obstacle/state obstacle_detector_msgs/msg/ObstacleState
@@ -155,10 +165,25 @@ ROS_DOMAIN_ID берётся из терминала, по умолчанию 0.
    ```
 **Терминал 4 - проигрывание записи с препятствием (запускать, когда RViz уже открылся):**
    ```
-   docker compose run --rm ros2 ros2 bag play /workspace/data/scenarios/roundT_doubleT_approach_figure
+   docker compose run --rm ros2 ros2 bag play /workspace/data/roundT_doubleT_approach_figure
+   ```
+Или, чтобы проиграть свою запись:
+   ```
+   docker compose run --rm ros2 ros2 bag play /workspace/data/ИМЯ_ВАШЕЙ_ЗАПИСИ
+   ```
+Запись начинает играть не сразу: сначала rosbag2 открывает файл на несколько гигабайт, это занимает пару секунд. Первые кадры уходят на захват оси пути, поэтому препятствия появляются ещё через секунду-две.
+
+Записи не входят в репозиторий . Поместите их в папку data в корне проекта. Внутри контейнера она доступна по пути /workspace/data - именно он и указывается в командах запуска.
+
+Если записи лежат в другом месте , то откройте docker-compose.yml и замените в нем папку слева от двоеточия на свою:
+   ```
+   - ./data:/workspace/data
+   ```
+Например, для записей на внешнем диске строка станет такой:
+   ```
+   - /mnt/lidar_bags:/workspace/data
    ```
 
-Записи лежат в /workspace/data/for_hackathon/: doubleT_platform, roundT_doubleT, roundT_pressureGate_roundT, roundT_squareT_pressureGate_squareT, squareT_platform_squareT_switch.
 
 Запись играется один раз, для повтора запустите команду ещё раз. Чтобы крутилась по кругу, допишите в конце --loop и на каждом новом круге нажимайте Reset в RViz внизу слева.
 
@@ -169,7 +194,7 @@ ROS_DOMAIN_ID берётся из терминала, по умолчанию 0.
    ```
    docker compose exec demo ros2 topic echo /obstacle/state obstacle_detector_msgs/msg/ObstacleState
    docker compose exec demo ros2 topic echo /obstacle/state obstacle_detector_msgs/msg/ObstacleState --field stop
-   docker compose exec demo ros2 bag play /workspace/data/scenarios/roundT_doubleT_approach_figure
+   docker compose exec demo ros2 bag play /workspace/data/roundT_doubleT_approach_figure
    ```
 
 **Что смотреть**
@@ -203,7 +228,7 @@ ROS_DOMAIN_ID берётся из терминала, по умолчанию 0.
    ```
 С видеокартой NVIDIA и nvidia-container-toolkit в команду можно добавить --gpus all. sysctl здесь нужен руками, потому что без compose нет сервиса network-setup, и без него часть кадров теряется. Запись проигрывается из второго терминала:
    ```
-   docker run --rm -it --network host --ipc host -v "$(pwd)/data:/workspace/data" tunnel-lidar-ros2:humble ros2 bag play /workspace/data/scenarios/roundT_doubleT_approach_figure
+   docker run --rm -it --network host --ipc host -v "$(pwd)/data:/workspace/data" tunnel-lidar-ros2:humble ros2 bag play /workspace/data/roundT_doubleT_approach_figure
    ```
 
 ## Описание ROS2

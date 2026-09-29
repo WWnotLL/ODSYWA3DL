@@ -19,6 +19,8 @@ docker compose up demo
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up demo
 ```
+Файла два, потому что docker-compose.gpu.yml сам по себе не запускается: он только добавляет доступ к видеокарте к сервисам demo и rviz, всё остальное берётся из docker-compose.yml. Образ от видеокарты не зависит и одинаков в обоих случаях, драйвер пробрасывается снаружи при запуске. Поэтому первая команда работает на любой машине, а вторая только там, где есть nvidia-container-toolkit.
+
 Терминал 2, полный результат по каждому кадру:
 ```bash
 docker compose run --rm ros2 ros2 topic echo /obstacle/state obstacle_detector_msgs/msg/ObstacleState
@@ -27,12 +29,14 @@ docker compose run --rm ros2 ros2 topic echo /obstacle/state obstacle_detector_m
 ```bash
 docker compose run --rm ros2 ros2 topic echo /obstacle/state obstacle_detector_msgs/msg/ObstacleState --field stop
 ```
-Терминал 4, проигрывание записи с препятствием (запускать, когда RViz уже открылся):
+Терминал 4, проигрывание записи (запускать, когда RViz уже открылся):
 ```bash
-docker compose run --rm ros2 ros2 bag play /workspace/data/scenarios/roundT_doubleT_approach_figure
+docker compose run --rm ros2 ros2 bag play /workspace/data/roundT_doubleT_approach_figure
 ```
-
-Записи лежат в /workspace/data/for_hackathon/: doubleT_platform, roundT_doubleT, roundT_pressureGate_roundT, roundT_squareT_pressureGate_squareT, squareT_platform_squareT_switch.
+Или 
+```bash
+docker compose run --rm ros2 ros2 bag play /workspace/data/ИМЯ ВАШЕЙ ЗАПИСИ
+```
 
 Запись играется один раз, для повтора запустите команду ещё раз. Чтобы крутилась по кругу, допишите в конце --loop и на каждом новом круге нажимайте Reset в RViz внизу слева.
 
@@ -42,7 +46,7 @@ docker compose run --rm ros2 ros2 bag play /workspace/data/scenarios/roundT_doub
 ```bash
 docker compose exec demo ros2 topic echo /obstacle/state obstacle_detector_msgs/msg/ObstacleState
 docker compose exec demo ros2 topic echo /obstacle/state obstacle_detector_msgs/msg/ObstacleState --field stop
-docker compose exec demo ros2 bag play /workspace/data/scenarios/roundT_doubleT_approach_figure
+docker compose exec demo ros2 bag play /workspace/data/roundT_doubleT_approach_figure
 ```
 
 ### Что смотреть
@@ -140,5 +144,5 @@ docker run --rm -it --network host --ipc host -e DISPLAY -v /tmp/.X11-unix:/tmp/
 ```
 С видеокартой NVIDIA и nvidia-container-toolkit в команду можно добавить --gpus all. sysctl здесь нужен руками, потому что без compose нет сервиса network-setup, и без него часть кадров теряется. Запись проигрывается из второго терминала:
 ```bash
-docker run --rm -it --network host --ipc host -v "$(pwd)/data:/workspace/data" tunnel-lidar-ros2:humble ros2 bag play /workspace/data/scenarios/roundT_doubleT_approach_figure
+docker run --rm -it --network host --ipc host -v "$(pwd)/data:/workspace/data" tunnel-lidar-ros2:humble ros2 bag play /workspace/data/roundT_doubleT_approach_figure
 ```
