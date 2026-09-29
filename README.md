@@ -229,7 +229,8 @@ base_link → hesai_lidar → track
 Благодаря этой цепочке RViz сам ставит облако и разметку на свои места. Если стоит другой лидар, достаточно поменять lidar_frame и положение при запуске.
 
 #### Конфигурация
-Все настройки в одном файле ROS2 folder/src/obstacle_detector/config/obstacle_detector.yaml. Сверху параметры ноды, под ключом core конфиг алгоритма. После правки перезапустите терминал 1.
+Все необходимые параметры алгоритма находятся в файле __[default.yaml](https://github.com/WWnotLL/ODSYWA3DL/blob/develop_ml/configs/default.yaml)__ <br>
+Сверху параметры ноды, под ключом core конфиг алгоритма. После правки перезапустите терминал 1.
 
 **Параметры ноды:**
 
@@ -485,34 +486,6 @@ demo запускает по факту под собой и детектор и
 
 ---
 
-## Параметры конфигурации
-Все необходимые параметры алгоритма находятся в файле __[default.yaml](https://github.com/WWnotLL/ODSYWA3DL/blob/develop_ml/configs/default.yaml)__
-
-Изменить параметры без пересборки образа можно, используя следующие команды:
-   ```
-   docker run -it --rm \
-    --net=host \
-    -v $(pwd)/configs:/ros2_ws/configs \
-    tunnel_detector:latest
-   ```
-
----
-
 ## Тестирование работы алгоритма
 Разработанные unit-тесты расположены в папке __[tests](https://github.com/WWnotLL/ODSYWA3DL/tree/develop_ml/tests)__
-
-
-Запустите unit-тесты ядра
-   ```
-   docker run --rm tunnel_detector:latest \
-       bash -c "cd /ros2_ws && python -m pytest tests/ -v"
-   ```
-
-Запустите проверку на тестовой записи
-   ```
-   docker run --rm \
-       -v $(pwd)/data:/ros2_ws/data \
-       tunnel_detector:latest \
-       bash -c "python examples/run_frames.py doubleT_platform --frames 50"
-   ```
 
